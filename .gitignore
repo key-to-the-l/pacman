@@ -1,0 +1,6 @@
+# IDE / agent 工作数据（绝不入库）
+.codebuddy/
+
+# 系统杂物
+Thumbs.db
+.DS_Store

@@ -1,0 +1,2210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CIPHER_RUNNER.EXE</title>
+<style>
+  /* 三族字体与美术规格对应（2026-09-16 美术提供）：
+     GameBold ← 方正兰亭黑 Heavy（规格 Bold：大标题等）
+     GameNormal ← 方正兰亭黑 Black（规格 Normal：正文/标签）
+     GameDrift ← Anton-Regular（规格 Dirft：数字/字母展示字，KEY/百分比/大数字）
+     注意：file:// 双击打开时 Chrome 会按 CORS 拦截字体加载 → 自动回退系统字体，
+     http(s) 访问（含服务器部署）时正常生效。 */
+  @font-face{
+    font-family:'GameBold';
+    src:url('Resource/fonts/FZLTBlackProGlobalHeavy.ttf') format('truetype');
+  }
+  @font-face{
+    font-family:'GameNormal';
+    src:url('Resource/fonts/FZLTBlackProGlobal.ttf') format('truetype');
+  }
+  @font-face{
+    font-family:'GameDrift';
+    src:url('Resource/fonts/Anton-Regular.ttf') format('truetype');
+  }
+  html{height:100%;}
+  body{
+    margin:0;padding:8px 0 10px;box-sizing:border-box;min-height:100%;
+    background:#000;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    font-family:'Consolas','Courier New',monospace;
+    color:#39ff6a;
+    user-select:none;
+  }
+  /* 2026-09-16 用户要求去掉换皮前的旧终端风页面元素（绿色标题字/绿边框/扫描线/底部提示），
+     页面只保留电视画面本身（对照 效果图/ 四张最终稿，无任何页内文字） */
+  #title{ display:none; }
+  #wrap{ position:relative; }
+  canvas{
+    display:block;
+    background:#000;
+    image-rendering:pixelated;
+    /* 位图固定 1920×1080；窗口较小时等比缩小显示（点击坐标已按缩放换算，不受影响） */
+    max-width:calc(100vw - 16px);
+    max-height:calc(100vh - 18px);
+    width:auto;
+    height:auto;
+  }
+  #scan{ display:none; }
+  #hint{ display:none; }
+</style>
+</head>
+<body>
+  <div id="title">CIPHER_RUNNER.EXE — 破解终端</div>
+  <div id="wrap">
+    <canvas id="game" width="1920" height="1080"></canvas>
+    <div id="scan"></div>
+  </div>
+  <div id="hint">方向键 / <b>WASD</b> 移动　　吃掉破解字符提升 PROGRESS　　躲开红色安保巡逻程序　　<b>Enter</b> 开始 / 重开</div>
+
+<script>
+(function(){
+"use strict";
+
+// ------------------------------------------------------------------
+// 基础配置
+// ------------------------------------------------------------------
+// 关卡地图（71×63 细网格，来源：美术关卡图 T_EatBeans 迷宫原型）
+//   '#' = 墙壁（有碰撞）—— 1 格厚，渲染为实心霓虹墙条
+//   'o' = 墙壁内部空间 / 关卡外部（有碰撞、不可进入、不放豆子）
+//   '.' = 走廊（可移动）—— 多为 3 格宽，豆子只放在走廊中线上
+const MAZE_ROWS = [
+"oooooooooooooo####################oooo####################oooooooooooooo",
+"oooooooooooooo#..................#oooo#..................#oooooooooooooo",
+"oooooooooooooo#..................#oooo#..................#oooooooooooooo",
+"oooooooooooooo#..................#oooo#..................#oooooooooooooo",
+"oooooooooo#####...############...#oooo#...############...#####oooooooooo",
+"oooooooooo#.......#oooooooooo#...#oooo#...#oooooooooo#.......#oooooooooo",
+"oooooooooo#.......#oooooooooo#...#oooo#...#oooooooooo#.......#oooooooooo",
+"oooooooooo#.......#oooooooooo#...#oooo#...#oooooooooo#.......#oooooooooo",
+"ooooooo####.......############...#oooo#...############.......####ooooooo",
+"ooooooo#.........................#oooo#.........................#ooooooo",
+"ooooooo#.........................#oooo#.........................#ooooooo",
+"ooooooo#.........................#oooo#.........................#ooooooo",
+"oooo####...####...############...#oooo#...############...####...####oooo",
+"oooo#.............#oooooooooo#...#oooo#...#oooooooooo#.............#oooo",
+"oooo#.............#oooooooooo#...#oooo#...#oooooooooo#.............#oooo",
+"oooo#.............#oooooooooo#...#oooo#...#oooooooooo#.............#oooo",
+"#####...###########ooo########...######...########ooo###########...#####",
+"#o......#ooooooooooooo#..........................#ooooooooooooo#.......#",
+"#.......#ooooooooooooo#..........................#ooooooooooooo#.......#",
+"#.......#ooooooooooooo#..........................#ooooooooooooo#.......#",
+"#.......###########ooo#...####################...#ooo###########.......#",
+"#.................#ooo#...#oooooooooooooooooo#...#ooo#.................#",
+"#.................#ooo#...#oooooooooooooooooo#...#ooo#.................#",
+"#.................#ooo#...#oooooooooooooooooo#...#ooo#.................#",
+"###############...#ooo#...#########oo#########...#ooo#...###############",
+"oooooooooooooo#...#ooo#.......#...#oo#...#.......#ooo#...#oooooooooooooo",
+"oooooooooooooo#...#ooo#.......#...#oo#...#.......#ooo#...#oooooooooooooo",
+"oooooooooooooo#...#ooo#.......#...#oo#...#.......#ooo#...#oooooooooooooo",
+"###############...#####.......#...#oo#...#.......#####...###############",
+"#.............................#...#oo#...#.............................#",
+"#.............................#...#oo#...#.............................#",
+"#.............................#...#oo#...#.............................#",
+"#...#######################...#...####...#...######################....#",
+"#......................................................................#",
+"#......................................................................#",
+"#......................................................................#",
+"###############...#####...#######......#######...#####...###############",
+"oooooooooooooo#...#ooo#...#ooooo#......#ooooo#...#ooo#...#oooooooooooooo",
+"oooooooooooooo#...#ooo#...#ooooo#......#ooooo#...#ooo#...#oooooooooooooo",
+"oooooooooooooo#...#ooo#...#ooooo#......#ooooo#...#ooo#...#oooooooooooooo",
+"###############...#ooo#...#ooooo########ooooo#...#ooo#...###############",
+"#.................#ooo#...#oooooooooooooooooo#...#ooo#.................#",
+"#.................#ooo#...#oooooooooooooooooo#...#ooo#.................#",
+"#.................#ooo#...#oooooooooooooooooo#...#ooo#.................#",
+"#.......###########ooo#...####################...#ooo###########.......#",
+"#.......#ooooooooooooo#..........................#ooooooooooooo#.......#",
+"#.......#ooooooooooooo#..........................#ooooooooooooo#.......#",
+"#.......#ooooooooooooo#..........................#ooooooooooooo#.......#",
+"#####...#######ooooooo#..........######..........#ooooooo#######...#####",
+"ooo.#.........#ooooooo#..........#oooo#..........#ooooooo#.........#oooo",
+"oooo#.........#oo######...####...#oooo#...####...######oo#.........#oooo",
+"oooo#.........#oo#........#oo#...#oooo#...#oo#........#oo#.........#oooo",
+"oooo####......#oo#........#oo#...#oooo#...#oo#........#oo#......####oooo",
+"ooooooo#......#oo#........#oo#...#oooo#...#oo#........#oo#......#ooooooo",
+"ooooooo#......#oo#........#oo#...#oooo#...#oo#........#oo#......#ooooooo",
+"ooooooo#......#oo#........#oo#...#oooo#...#oo#........#oo#......#ooooooo",
+"ooooooo####...####...######oo#...#oooo#...#oo######...####...####ooooooo",
+"oooooooooo#..........#ooooooo#...#oooo#...#ooooooo#..........#oooooooooo",
+"oooooooooo#..........#ooooooo#...#oooo#...#ooooooo#..........#oooooooooo",
+"oooooooooo#..........#ooooooo#...#oooo#...#ooooooo#..........#oooooooooo",
+"oooooooooo#####......#########...#oooo#...#########......#####oooooooooo",
+"oooooooooooooo#..................#oooo#..................#oooooooooooooo",
+"oooooooooooooo#..................#oooo#..................#oooooooooooooo",
+"oooooooooooooo#..................#oooo#..................#oooooooooooooo",
+"oooooooooooooo####################oooo####################oooooooooooooo"
+]
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// 布局规格（2026-09-16 用户指定「全部内容在电视机屏幕里面」）：
+// 画布固定 16:9（1280×720，与 1920×1080 的 BackGround 同比例，整机无变形铺满）；
+// 迷宫+右侧面板适配进电视屏幕内区（tvScreenRect），CELL 按适配计算（约 8.5px）。
+// 玩家模型 = 碰撞体 = 2 格；速度随 CELL 等比（≈10.7 格/秒）。
+const CANVAS_W = 1920, CANVAS_H = 1080; // 整个游戏界面（含电视机外框）= 1920×1080（2026-09-17 用户指定）
+const CELL_BASE = (96 / 72) * 10;      // 适配上限 10pt（≈13.33px），实际由屏幕内区决定
+let PANEL_W = 0;                       // 右侧信息面板宽（computeLayout 按效果图比例：约占屏幕内区右 1/3）
+let CELL = CELL_BASE;
+let ROWS = MAZE_ROWS.length;
+let COLS = MAZE_ROWS[0].length;
+let MAZE_W = COLS * CELL;
+let MAZE_H = ROWS * CELL;
+let OFFSET_X = 0;
+let OFFSET_Y = 0;
+let PANEL_X = 0;                       // 面板左缘（computeLayout 中锚定到屏幕内区右侧）
+// 碰撞体半宽 = 模型半宽（模型多大，碰撞体积就多大，二者严格一致）
+let PLAYER_HALF = CELL * 1.0;
+let ENEMY_HALF  = CELL * 1.0;  // 2026-10-08 用户指定：**与玩家尺寸一致**（原 0.95；身体 1.9 格 → 2 格）
+let PLAYER_SPD  = CELL * (118 / 11);
+let ENEMY_SPD   = CELL * (82 / 11);
+function computeLayout(cols, rows){
+  COLS = cols; ROWS = rows;
+  const sr = tvScreenRect();           // 电视屏幕内区（画布坐标）
+  // 效果图布局（2026-09-17 用户指定）：屏幕内区两侧留白（内容不贴边），
+  // 迷宫区约占左 2/3，信息面板约占右 1/3
+  const PAD = 48;                                // 两侧留白
+  const contentW = sr.w - PAD * 2;               // 内容总宽
+  PANEL_W = Math.floor(contentW / 3);            // 面板 ≈ 右 1/3
+  const mazeRegionW = contentW - PANEL_W;        // 迷宫区 ≈ 左 2/3
+  const innerH = sr.h - 32;
+  CELL = Math.min(mazeRegionW / cols, innerH / rows, CELL_BASE);
+  MAZE_W = COLS * CELL;
+  MAZE_H = ROWS * CELL;
+  OFFSET_X = sr.x + PAD;                          // 迷宫左缘 = 内区左侧留白处
+  OFFSET_Y = sr.y + 16 + (innerH - MAZE_H) / 2;   // 迷宫垂直居中
+  PANEL_X = sr.x + sr.w - PAD - PANEL_W;          // 面板右缘 = 内区右侧留白处
+  PLAYER_HALF = CELL * 1.0;
+  ENEMY_HALF  = CELL * 1.0; // 2026-10-08：与玩家一致（computeLayout 重算处，两处同步改）
+  PLAYER_SPD  = CELL * (118 / 11);
+  ENEMY_SPD   = CELL * (82 / 11);
+}
+
+// 静态/低频变化内容用离屏画布缓存，主循环里只做一次 drawImage 贴图，
+// 避免每帧都对上百个格子重新计算发光(shadowBlur)导致卡顿。
+const mazeLayer = document.createElement('canvas');
+mazeLayer.width = canvas.width; mazeLayer.height = canvas.height;
+const mazeCtx = mazeLayer.getContext('2d');
+
+const dotsLayer = document.createElement('canvas');
+dotsLayer.width = canvas.width; dotsLayer.height = canvas.height;
+const dotsCtx = dotsLayer.getContext('2d');
+
+// 画布固定 16:9（1280×720）。离屏层同步重建
+// （改尺寸会清空内容，调用后必须重新 renderMazeLayer/renderDotsLayer）
+function resizeCanvases(){
+  canvas.width  = CANVAS_W;
+  canvas.height = CANVAS_H;
+  mazeLayer.width = canvas.width; mazeLayer.height = canvas.height;
+  dotsLayer.width = canvas.width; dotsLayer.height = canvas.height;
+}
+resizeCanvases();
+
+const COLOR_GREEN = '#39ff6a';
+const COLOR_CYAN  = '#2be8ff';
+const COLOR_RED   = '#ff3b3b';
+const COLOR_DIM    = '#0a3b22';
+// 墙条填充色：取自美术关卡图实测均值 (34,147,177)
+const WALL_FILL   = '#2b96b6';
+// 三族字体栈（与美术规格 Bold/Normal/Dirft 对应；@font-face 失败时回退系统字体）
+const FONT_BOLD   = '"GameBold","GameNormal","Microsoft YaHei","PingFang SC","Segoe UI",sans-serif';
+const FONT_NORMAL = '"GameNormal","Microsoft YaHei","PingFang SC","Segoe UI",sans-serif';
+const FONT_DRIFT  = '"GameDrift",Anton,Impact,"Arial Narrow Bold",Consolas,sans-serif';
+// 美术数值单位（2026-09-17 用户指定）：字号/轮廓/Outline Blur/投影偏移 全部以 **pt** 计，
+// 1pt = 96/72 px（96dpi）；字间距 = 字号的千分之一（表格的 80 → 0.08 倍字号）。
+const PT = 96 / 72;
+const fpt = (sizePt, family) => (sizePt * PT) + 'px ' + family; // 字号 pt → canvas font
+const LS80 = sizePt => (sizePt * 80 / 1000 * PT) + 'px';        // 字间距80 = 字号×80/1000
+
+// 破解字符池（普通豆子的显示文本）—— 2026-09-24 用户指定：**只保留大写字母 / 阿拉伯数字 / 标点符号**
+//   （已移除小写字母；都是单个字符，单个绘制，Dirft 9pt fff6e0）
+const TOKEN_POOL = (
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
+  '0123456789' +
+  '!@#$%^&*_+-=?/<>~'
+).split('');
+
+// 高价值豆子（2026-09-24 用户指定）：**每局 5% 概率触发**，触发时随机出现 **1~4 个**，
+//   每个额外加 **+2%~10%** 进度（与普通吃豆计数**额外叠加**）。
+//   显示规格：字色 ffd012 / 字号 17 / Dirft / 轮廓 1 / Outline Blur 5 / 轮廓色 d55d21 /
+//   投影 d55d21 / 投影偏移 x=3,y=3
+const VALUE_BEAN_ODDS   = 0.05;  // 每局触发概率
+const VALUE_BEAN_MAX    = 4;     // 触发后随机个数上限（1~4）
+const VALUE_BONUS_MIN   = 2;     // 单颗加成下限 (%)
+const VALUE_BONUS_MAX   = 10;    // 单颗加成上限 (%)
+const VALUE_BEAN_GAP    = 4;     // 特殊豆之间的最小间隔（Chebyshev 格数）：字形+光晕外扩约 ±1.9 格，≥4 格保证互不叠压（2026-09-29）
+
+
+
+// ------------------------------------------------------------------
+// 地图数据
+// ------------------------------------------------------------------
+let wallGrid = [];   // [r][c] -> boolean 是否是墙
+let wallCells = [];  // 所有墙格的 [r,c] 列表（AABB 碰撞用）
+let dotGrid  = [];   // [r][c] -> boolean 是否还有未吃的字符
+let tokenGrid = [];  // [r][c] -> 显示的字符文本
+let valueGrid = [];  // [r][c] -> 高价值豆的进度加成（0 = 普通豆；>0 = 高价值，值为 +%）
+let totalDots = 0;
+
+// 当前生效的关卡数据：编辑器覆盖优先，否则内置（尺寸已与 ROWS/COLS 对齐）
+function activeMazeRows(){
+  return (Array.isArray(window.MAZE_ROWS_OVERRIDE)
+    && window.MAZE_ROWS_OVERRIDE.length === ROWS
+    && window.MAZE_ROWS_OVERRIDE.every(s => typeof s === 'string' && s.length === COLS))
+    ? window.MAZE_ROWS_OVERRIDE : MAZE_ROWS;
+}
+
+function buildMaze(){
+  // 优先使用编辑器通过 localStorage 同步的自定义关卡（仅本地测试用）
+  const src = activeMazeRows();
+  wallGrid = [];
+  wallCells = [];
+  dotGrid = [];
+  tokenGrid = [];
+  valueGrid = []; // ⚠必须清零重建（2026-09-29）：之前漏了这行——buildMaze 每次往旧数组 push，
+                  //   上一局的特殊豆全部残留并跨局累积（死亡重生/通关重开各累积一次），
+                  //   几局后特殊豆越攒越多、相互叠字（用户截图的"又出现这种情况"）
+  totalDots = 0;
+  for(let r=0;r<ROWS;r++){
+    const wRow=[], dRow=[], tRow=[], vRow=[];
+    for(let c=0;c<COLS;c++){
+      const ch = src[r][c];
+      // '#' 墙壁、'o' 墙壁内部空间/关卡外部：都不可进入
+      const wall = (ch === '#' || ch === 'o');
+      wRow.push(wall);
+      if(wall) wallCells.push([r, c]);
+      dRow.push(false);
+      tRow.push('');
+      vRow.push(0); // 0 = 普通豆
+    }
+    wallGrid.push(wRow);
+    dotGrid.push(dRow);
+    tokenGrid.push(tRow);
+    valueGrid.push(vRow);
+  }
+  // 先 BFS 算出「玩家身体确实能到达」的格子——无论是自动布豆还是自定义布豆，
+  // 都只在这个范围内出现，保证 PROGRESS 一定能到 100%。
+  const seen = wallGrid.map(row => row.map(()=>false));
+  const queue = [];
+  // 出生点是"矩形左上角"；可达 BFS 仍是格中心模型，故从矩形里挑一个站得下的格作为起点
+  const ps = resolveSpawn(activePlayerSpawn(), PLAYER_HALF); // 矩形放不下时自动吸附（2026-09-29）
+  const start = spawnStandCell(ps);
+  queue.push([start.r, start.c]);
+  seen[start.r][start.c] = true;
+  for(let head=0; head<queue.length; head++){
+    const r = queue[head][0], c = queue[head][1];
+    const around = [[r-1,c],[r+1,c],[r,c-1],[r,c+1]];
+    for(const [nr,nc] of around){
+      if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+      if(seen[nr][nc] || wallGrid[nr][nc]) continue;
+      seen[nr][nc] = true;
+      if(!canStandAt(nr, nc, PLAYER_HALF)) continue; // 站不下的不再扩散
+      queue.push([nr,nc]);
+    }
+  }
+  // 放豆子：DOT_CELLS 非空 → 只放用户设定的位置（编辑器豆子笔刷导出）；
+  // 否则按「走廊中线」规则自动布豆。
+  const putDot = (r,c) => {
+    dotGrid[r][c] = true;
+    // 字母按坐标确定性分配（用户要求：本地/服务器/每次刷新逐字母一致，不再随机）
+    tokenGrid[r][c] = TOKEN_POOL[(r*731 + c*379 + (r*c)*11) % TOKEN_POOL.length];
+    totalDots++;
+  };
+  if(DOT_CELLS.length > 0){
+    for(const cell of DOT_CELLS){
+      const r = cell[0], c = cell[1];
+      if(r<0||r>=ROWS||c<0||c>=COLS) continue;
+      if(wallGrid[r][c] || !seen[r][c] || dotGrid[r][c]) continue;
+      putDot(r,c);
+    }
+  } else {
+    for(let r=0;r<ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        if(seen[r][c] && isDotSpot(r,c) && !dotGrid[r][c]) putDot(r,c);
+      }
+    }
+  }
+  spawnValueBeans();
+}
+// 高价值豆子（2026-09-24 用户指定）：**每局 5% 概率触发**；触发时在所有豆子里随机挑 **1~4 个**，
+//   每个赋予 +2%~10% 的进度加成（与普通吃豆计数**额外叠加**，见 updateEating）
+function spawnValueBeans(){
+  if(Math.random() >= VALUE_BEAN_ODDS) return;  // 本局不出现
+  const cells = [];
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++) if(dotGrid[r][c]) cells.push([r,c]);
+  if(!cells.length) return;
+  const want = Math.min(1 + Math.floor(Math.random() * VALUE_BEAN_MAX), cells.length); // 1~4
+  // Fisher-Yates 全量洗牌，再贪心挑选：特殊豆之间至少隔 VALUE_BEAN_GAP 格（Chebyshev 距离）。
+  //   2026-09-29 用户截图：两颗特殊豆只隔 2 格（24.6px），而 17pt 字形 + 轮廓 Blur + 投影
+  //   外扩约 ±1.9 格（±23px）→ 字形相互叠压成一团。间隔 ≥4 格（49.2px > 2×23px）即完全不重叠。
+  for(let i=cells.length-1;i>0;i--){
+    const j = Math.floor(Math.random() * (i+1));
+    const t = cells[i]; cells[i] = cells[j]; cells[j] = t;
+  }
+  const GAP = VALUE_BEAN_GAP;
+  const picked = [];
+  for(const [r,c] of cells){
+    if(picked.length >= want) break;
+    if(picked.every(([pr,pc]) => Math.max(Math.abs(pr-r), Math.abs(pc-c)) >= GAP)){
+      picked.push([r,c]);
+      valueGrid[r][c] = VALUE_BONUS_MIN + Math.floor(Math.random() * (VALUE_BONUS_MAX - VALUE_BONUS_MIN + 1));
+    }
+  }
+}
+
+// 是否是走廊中线格（纵向带中点 或 横向带中点）
+function isDotSpot(r,c){
+  if(wallGrid[r][c]) return false;
+  const open = (rr,cc) => rr>=0 && rr<ROWS && cc>=0 && cc<COLS && !wallGrid[rr][cc];
+  let up=0, dn=0, lf=0, rt=0;
+  while(open(r-up-1, c)) up++;
+  while(open(r+dn+1, c)) dn++;
+  while(open(r, c-lf-1)) lf++;
+  while(open(r, c+rt+1)) rt++;
+  const vBand = up+dn+1, hBand = lf+rt+1;
+  return up === Math.floor(vBand/2) || lf === Math.floor(hBand/2);
+}
+
+function isWallCell(r,c){
+  if(r<0||r>=ROWS||c<0||c>=COLS) return true;
+  return wallGrid[r][c];
+}
+
+function cellCenter(r,c){
+  return {
+    x: OFFSET_X + c*CELL + CELL/2,
+    y: OFFSET_Y + r*CELL + CELL/2
+  };
+}
+
+// ------------------------------------------------------------------
+// 密码 KEY 配置（外部 json，读取失败则用内置默认值兜底，
+// 保证双击直接打开 html 也能正常运行）
+// ------------------------------------------------------------------
+let KEY_DIGITS = '1337';
+async function loadKeyConfig(){
+  try{
+    const res = await fetch('key.json', {cache:'no-store'});
+    if(!res.ok) throw new Error('http '+res.status);
+    const data = await res.json();
+    if(data && typeof data.key === 'string' && /^[0-9A-Za-z]{4}$/.test(data.key)){
+      KEY_DIGITS = data.key.toUpperCase();
+    }
+  }catch(e){
+    // 双击本地打开时浏览器可能拦截本地文件 fetch（CORS），
+    // 这里静默使用内置默认密码，不影响游戏运行。
+    KEY_DIGITS = '1337';
+  }
+}
+
+// ------------------------------------------------------------------
+// 实体：玩家 & 敌人
+// ------------------------------------------------------------------
+const DIRS = {
+  UP:    {x:0, y:-1},
+  DOWN:  {x:0, y:1},
+  LEFT:  {x:-1,y:0},
+  RIGHT: {x:1, y:0},
+  NONE:  {x:0, y:0}
+};
+
+// ------------------------------------------------------------------
+// 出生矩形（2026-09-29 用户指定）：**不再以格中心为出生点**，而是"整个矩形贴合格子"——
+//   (r,c) = 矩形左上角格；边长 = 身体尺寸向上取整的格数（玩家 2.0 格→2、敌人 1.9 格→2）；
+//   实体落在该矩形的**中心**（玩家正好占满 2×2 格；敌人 1.9 格居中于 2×2 矩形，四边各留 0.05 格）。
+// ------------------------------------------------------------------
+// 注意：half 是**像素**（PLAYER_HALF = CELL*1.0），要先换算成格数再向上取整
+function spawnRectCells(half){ return Math.ceil(half * 2 / CELL); }
+function rectFits(r, c, size){
+  for(let rr=r; rr<r+size; rr++){
+    for(let cc=c; cc<c+size; cc++){
+      if(rr<0||rr>=ROWS||cc<0||cc>=COLS) return false;
+      if(wallGrid[rr][cc]) return false;
+    }
+  }
+  return true;
+}
+function rectCenter(r, c, size){
+  return { x: OFFSET_X + (c + size/2)*CELL, y: OFFSET_Y + (r + size/2)*CELL };
+}
+
+function makeEntity(r,c,speed,half){
+  const p = rectCenter(r, c, spawnRectCells(half)); // (r,c) = 出生矩形左上角
+  return {
+    spawnR:r, spawnC:c,
+    x:p.x, y:p.y,
+    facing: DIRS.NONE,   // 当前实际移动方向：= 玩家正按住的键（或敌人AI选的方向）
+    half: half,          // 碰撞体半宽 = 模型半宽
+    speed: speed
+  };
+}
+
+let player, enemies;
+// 2026-09-29 起：出生点 (r,c) = **出生矩形左上角格**（矩形 2×2 格，见 spawnRectCells）。
+//   用户给的 {r:39,c:35} 是旧"格中心"语义；换算成矩形语义后左上角 = {r:38,c:35}
+//   （矩形占 r38~39 / c35~36，正好在 3 格宽走廊内、下沿贴第 40 行墙但不压墙）
+const PLAYER_SPAWN = {r:38, c:35};
+// 2026-09-29 用户指定：4 个敌人放在**四个角**（脚本扫描"道路格 + 敌人身体站得下 +
+//   在可玩连通区内"后取每个角最近的一格，四角对称）。
+//   2026-09-29 起同样按**出生矩形左上角**解释（2×2 格，敌人 1.9 格身体居中于该矩形）
+const ENEMY_SPAWNS = [
+  {r:6,  c:12},  // 左上
+  {r:6,  c:59},  // 右上
+  {r:58, c:12},  // 左下
+  {r:58, c:59}   // 右下
+];
+// 当前生效的出生点：编辑器覆盖关卡自带出生点优先，否则用内置
+function activePlayerSpawn(){
+  const s = window.OVERRIDE_SPAWNS;
+  return (s && s.player) ? {r: s.player[0], c: s.player[1]} : PLAYER_SPAWN;
+}
+function activeEnemySpawns(){
+  const s = window.OVERRIDE_SPAWNS;
+  return (s && Array.isArray(s.enemies) && s.enemies.length)
+    ? s.enemies.map(p => ({r: p[0], c: p[1]})) : ENEMY_SPAWNS;
+}
+// 自定义豆子位置（由 tools/maze-editor.html 的「豆子笔刷」设定、导出后粘贴到这里）。
+// 空数组 = 按"走廊中线"规则自动布豆（当前行为）；
+// 非空 = 只在这些位置放豆子，且必须是玩家能走到的道路格（保证 PROGRESS 可达 100%）。
+const DOT_CELLS = [
+[30,2],[34,2],[34,8],[34,14],[34,26],[34,32],[34,41],[34,47],[34,53],[30,8],[30,14],[30,20],
+[30,26],[32,32],[30,32],[32,39],[28,16],[26,16],[24,16],[14,14],[14,16],[10,14],[10,12],[6,14],
+[8,14],[10,16],[8,16],[6,16],[10,42],[10,48],[14,12],[30,43],[32,43],[30,45],[30,47],[30,53],
+[14,55],[14,57],[14,59],[12,55],[10,55],[10,57],[10,59],[8,55],[6,55],[6,57],[8,57],[8,59],
+[6,59],[34,37],[34,39],[34,34],[36,34],[36,37],[52,47],[52,49],[34,43],[34,45],[30,28],[32,28],
+[34,28],[34,30],[30,24],[34,24],[30,16],[30,18],[30,22],[34,22],[34,16],[34,18],[34,20],[36,16],
+[38,16],[40,16],[50,8],[54,10],[52,10],[50,10],[36,24],[38,24],[40,24],[42,24],[44,24],[32,2],
+[52,61],[54,61],[50,61],[50,63],[30,55],[30,57],[10,40],[8,40],[6,40],[10,44],[10,46],[10,50],
+[10,52],[30,10],[30,12],[34,10],[34,12],[28,26],[28,28],[28,32],[26,32],[26,28],[26,26],[22,16],
+[22,14],[22,12],[22,10],[22,8],[22,6],[22,4],[22,2],[20,2],[20,4],[20,6],[18,6],[16,6],
+[14,6],[10,18],[10,20],[10,22],[10,24],[10,26],[10,28],[30,39],[28,39],[26,39],[28,43],[26,43],
+[26,45],[28,45],[28,47],[26,47],[24,47],[22,47],[20,47],[18,26],[18,28],[18,31],[18,47],[18,45],
+[18,43],[18,40],[18,34],[18,37],[16,31],[14,31],[12,31],[10,31],[8,31],[16,40],[14,40],[12,40],
+[12,16],[28,24],[26,24],[24,24],[22,24],[20,24],[18,24],[6,31],[28,55],[26,55],[24,55],[22,55],
+[22,57],[22,59],[22,61],[22,63],[22,65],[22,67],[20,65],[20,67],[22,69],[20,69],[18,65],[16,65],
+[14,65],[42,16],[42,14],[42,12],[42,10],[42,8],[34,6],[34,4],[30,4],[30,6],[42,6],[42,4],
+[42,2],[44,2],[44,4],[44,6],[46,6],[48,6],[50,6],[46,24],[48,24],[50,24],[52,24],[52,22],
+[46,26],[46,28],[46,31],[36,47],[38,47],[40,47],[42,47],[44,47],[46,47],[46,45],[46,43],[46,40],
+[46,34],[46,37],[36,55],[38,55],[40,55],[42,55],[42,57],[42,59],[42,61],[42,63],[42,65],[42,67],
+[42,69],[44,69],[44,65],[44,67],[46,65],[48,65],[50,65],[48,47],[50,47],[12,62],[10,62],[14,62],
+[12,9],[10,9],[14,9],[30,59],[30,61],[30,63],[30,65],[30,67],[30,69],[32,69],[34,69],[34,67],
+[34,65],[34,63],[34,61],[34,59],[34,57],[34,55],[54,22],[54,24],[54,47],[54,49],[18,67],[18,69],
+[18,2],[18,4],[46,2],[46,4],[46,67],[46,69],[50,59],[52,59],[54,59],[56,59],[58,59],[58,57],
+[58,55],[60,55],[62,55],[62,40],[60,40],[58,40],[56,40],[54,40],[52,40],[50,40],[48,40],[48,31],
+[50,31],[52,31],[54,31],[56,31],[58,31],[60,31],[62,31],[62,16],[60,16],[58,16],[58,14],[58,12],
+[56,12],[54,12],[52,12],[50,12],[4,16],[2,16],[2,18],[2,20],[2,22],[2,24],[2,26],[2,28],
+[2,31],[4,31],[2,40],[2,42],[2,44],[2,46],[2,48],[2,50],[2,52],[2,55],[4,55],[4,40],
+[6,12],[8,12],[48,26],[48,28],[48,43],[48,45],[38,34],[38,37],[34,49],[34,51],[30,49],[30,51],
+[52,19],[54,19],[56,19],[58,19],[60,19],[52,52],[54,52],[56,52],[58,52],[60,52],[62,52],[62,42],
+[62,44],[62,46],[62,48],[62,50],[62,19],[62,21],[62,23],[62,25],[62,27],[62,29]
+]
+// 内置豆子快照：applyMazeOverrideFromStorage 每次会先清空 DOT_CELLS，
+// 无编辑器覆盖时（线上/未开编辑器）必须恢复成这份内置豆子，否则会退化成中线自动布豆
+const DOT_CELLS_BUILTIN = DOT_CELLS.map(p => [p[0], p[1]]);
+
+function currentCell(ent){
+  const c = Math.floor((ent.x - OFFSET_X) / CELL);
+  const r = Math.floor((ent.y - OFFSET_Y) / CELL);
+  return {r,c};
+}
+
+// 敌人朝某个方向走一格后，身体（AABB = 模型尺寸）能否站下
+// 不能只看目标格是不是墙——身体宽于 1 格时可能目标格是路但两侧挤不进
+function isOpen(r,c,dir){
+  const nr = r + dir.y, nc = c + dir.x;
+  if(nr<0||nr>=ROWS||nc<0||nc>=COLS) return false;
+  if(wallGrid[nr][nc]) return false;
+  return canStandAt(nr, nc, ENEMY_HALF);
+}
+
+// ------------------------------------------------------------------
+// 游戏状态
+// ------------------------------------------------------------------
+let lives = 3;
+let eaten = 0;
+let progress = 0;
+let bonusProgress = 0; // 高价值豆累计的额外进度（%）；与普通吃豆计数**额外叠加**
+let revealed = [false,false,false,false];
+let invulnT = 0;
+let flashMsg = '';
+let flashMsgT = 0;
+// 破解成功（吃完所有豆子）状态：cracked=true 后角色换 Player_01、并以角色为中心出现 Player_Eff。
+// 2026-09-24 用户指定：吃光豆子后**先停留 WIN_SHOWCASE_SEC 秒**展示该状态与特效，再进胜利界面
+//   （此前是吃完立刻 state='win'，结算界面整屏覆盖，成功态根本看不见）
+let cracked = false;   // 是否已吃光所有豆子（一局内只升不降，fullReset 清零）
+let winShowT = 0;      // 展示窗口剩余秒数；>0 时冻结移动/碰撞，仅做展示
+const WIN_SHOWCASE_SEC = 1.0;
+// PLAYER_EFF_ALPHA：2026-09-29 起**不再使用**——用户改为主「原图接入」（不缩放、不改样式），
+//   即按 700×700 原始像素、α=1 绘制；保留此常量仅为回溯（若要恢复淡化再启用）
+const PLAYER_EFF_ALPHA = 1;
+
+let state = 'boot'; // boot | ready | playing | win | dead-restart
+let bootT = 0;      // 进入开机界面（电视整机图）的时间戳
+let lastTime = 0;
+
+function resetPositions(){
+  const ps = activePlayerSpawn();
+  const pp = rectCenter(ps.r, ps.c, spawnRectCells(PLAYER_HALF));
+  player.x = pp.x; player.y = pp.y;
+  player.facing = DIRS.NONE;
+  dirStack.length = 0; // 复位时视为所有键都已松开
+  enemies.forEach(en=>{
+    const ep = rectCenter(en.spawnR, en.spawnC, spawnRectCells(en.half));
+    en.x = ep.x; en.y = ep.y;
+    en.facing = DIRS.NONE;
+  });
+  invulnT = 1.0;
+}
+
+function fullReset(keepKey){
+  buildMaze();
+  renderDotsLayer();
+  const ps = resolveSpawn(activePlayerSpawn(), PLAYER_HALF); // 站不下时自动吸附（2026-09-29）
+  player = makeEntity(ps.r, ps.c, PLAYER_SPD, PLAYER_HALF);
+  enemies = activeEnemySpawns().map(s => {
+    const es = resolveSpawn(s, ENEMY_HALF);
+    return makeEntity(es.r, es.c, ENEMY_SPD, ENEMY_HALF);
+  });
+  lives = 3;
+  eaten = 0;
+  progress = 0;
+  bonusProgress = 0; // 高价值豆加成累计清零（豆子网格由 buildMaze 重建）
+  revealed = [false,false,false,false];
+  invulnT = 1.0;
+  flashMsg=''; flashMsgT=0;
+  cracked = false; winShowT = 0; // 破解成功态与展示窗口（2026-09-24）
+}
+
+function startGame(){
+  fullReset(true);
+  state = 'playing';
+}
+
+// ------------------------------------------------------------------
+// 输入
+// ------------------------------------------------------------------
+const KEYMAP = {
+  'ArrowUp':DIRS.UP, 'w':DIRS.UP, 'W':DIRS.UP,
+  'ArrowDown':DIRS.DOWN, 's':DIRS.DOWN, 'S':DIRS.DOWN,
+  'ArrowLeft':DIRS.LEFT, 'a':DIRS.LEFT, 'A':DIRS.LEFT,
+  'ArrowRight':DIRS.RIGHT, 'd':DIRS.RIGHT, 'D':DIRS.RIGHT
+};
+
+// 移动方向 = 当前正按住的键（按住就走，松开就停，是"实时响应"而不是"意图缓冲"）。
+// 用"按键堆栈"记录仍按住的方向键，取最新按下且仍按住的方向为准；
+// 松开某个键时，如果还有别的键仍按住，立刻切换到那个方向；全部松开则立刻停止。
+const dirStack = [];
+
+// 2026-09-29 用户指定：破解成功（吃光豆子）后画面停在那一刻，需**再确认一次**才进结算界面。
+//   确认方式：点一次屏幕（canvas click）或按任意键（keydown）
+function confirmWinHold(){
+  if(state === 'win-hold'){ state = 'win'; return true; }
+  return false;
+}
+
+window.addEventListener('keydown', (e)=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)){
+    e.preventDefault();
+  }
+  if(confirmWinHold()) return;             // 冻结画面中：任意键确认 → 进入结算
+  if(e.key === 'Enter' || e.key === ' '){
+    if(state === 'boot'){ state = 'ready'; return; } // 开机界面任意键跳过
+    if(state === 'ready' || state === 'win' || state === 'dead-restart'){
+      startGame();
+    }
+    return;
+  }
+  const d = KEYMAP[e.key];
+  if(d && player){
+    const idx = dirStack.indexOf(d);
+    if(idx !== -1) dirStack.splice(idx,1);
+    dirStack.push(d);
+    player.facing = d; // 立即生效，无需等待对齐格子
+  }
+});
+
+window.addEventListener('keyup', (e)=>{
+  const d = KEYMAP[e.key];
+  if(d && player){
+    const idx = dirStack.indexOf(d);
+    if(idx !== -1) dirStack.splice(idx,1);
+    if(dirStack.length > 0){
+      // 还有其它键按住 —— 立刻切换到那个方向
+      player.facing = dirStack[dirStack.length-1];
+    } else {
+      // 所有方向键都松开了 —— 立刻停止
+      player.facing = DIRS.NONE;
+    }
+  }
+});
+
+window.addEventListener('blur', ()=>{
+  // 切出窗口/切换标签时清空按键状态并停止，避免漏掉 keyup 造成"幽灵移动"
+  dirStack.length = 0;
+  if(player) player.facing = DIRS.NONE;
+});
+
+canvas.addEventListener('click', ()=>{
+  if(confirmWinHold()) return;             // 冻结画面中：点一次屏幕 → 进入结算
+  if(state === 'boot'){ state = 'ready'; return; } // 开机界面点击跳过
+  if(state === 'ready' || state === 'win' || state === 'dead-restart'){
+    startGame();
+  }
+});
+
+// 开始界面按钮：位置统一由这里给出（悬停判定与绘制共用；锚定屏幕内区中心）
+// 按钮横向微调（单位 pt，负 = 左移）：2026-09-29 用户先左移 10 个单位、再左移 5 个单位
+//   → **累计 15 个单位**。三个界面的动作按钮共用 startButtonRect()，改这一处三界面同步
+const BTN_DX_PT = -15;
+// 按钮主文字（"开始游戏"/"再来一次"）相对键帽的额外横移（**单位 px**）：
+//   2026-09-29 用户先右移 20 个 px、再右移 25 个 px → **累计 45 px**
+const BTN_LABEL_DX_PX = 45;
+function startButtonRect(){
+  // 2026-09-23 恢复原尺寸：Button.png 原图 281×60（此前 250×62 被轻微拉伸）；
+  // 命中框同步改为原图尺寸，保证悬停/绘制一致
+  const bw = 281, bh = 60;
+  const sr = tvScreenRect();
+  // 纵向偏移：2026-09-21 按参考图拉开与副标题的距离（原 118，含 09-16 的 +10）
+  return { x: canvas.width/2 - bw/2 + BTN_DX_PT * PT, y: Math.round(sr.y + sr.h * 0.47 + TITLE_CLUSTER.btnExtra), w: bw, h: bh };
+}
+// 当前状态的动作按钮位置（三个界面同款位置）
+function currentButtonRect(){
+  return startButtonRect();
+}
+// 鼠标悬停动作按钮：高亮 + 手型光标（点击仍保持全画布生效）
+let hoverStartBtn = false;
+canvas.addEventListener('mousemove', e => {
+  if(state !== 'ready' && state !== 'win' && state !== 'dead-restart'){ hoverStartBtn = false; canvas.style.cursor = 'default'; return; }
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const my = (e.clientY - rect.top) * (canvas.height / rect.height);
+  const b = currentButtonRect();
+  hoverStartBtn = mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h;
+  canvas.style.cursor = hoverStartBtn ? 'pointer' : 'default';
+});
+
+// ------------------------------------------------------------------
+// 更新逻辑
+// ------------------------------------------------------------------
+// 碰撞体积 = 模型尺寸（AABB）：移动时检查身体包围盒覆盖的所有墙格，
+// 而不只是中心所在格——身体宽于 1 格时不会穿墙，也不会视觉上压进墙里。
+// 纯轴向移动：按哪个方向键就只改那一根轴的坐标，不做车道吸附。
+
+// 身体能否站在 (r,c) 格中心（AABB 不重叠任何墙格）
+function canStandAt(r, c, half){
+  const p = cellCenter(r, c);
+  return canFitAt(p.x, p.y, half);
+}
+// 出生点兜底（2026-09-29）：手工/编辑器指定的出生点可能落在"身体站不下"的格子——
+//   例：玩家身体 2 格高，站在 3 格走廊的**最后一行**时下半身会压进墙 → canStandAt=false，
+//   buildMaze 的可达 BFS 起点直接失效 → **一颗豆子都放不下（totalDots=0）**，整局不可用。
+//   这里自动就近吸附到能站下的道路格（按距离取最近，同距取先扫到的），并打一条 console 警告。
+// 出生矩形 → 可达 BFS 的起点格：矩形 4 个格里任取一个"以格中心站位"能站下的（BFS 走的是格中心）
+function spawnStandCell(rect){
+  const cand = [[rect.r,rect.c],[rect.r,rect.c+1],[rect.r+1,rect.c],[rect.r+1,rect.c+1]];
+  for(const [r,c] of cand){
+    if(r>=0&&r<ROWS&&c>=0&&c<COLS&&canStandAt(r,c,PLAYER_HALF)) return {r,c};
+  }
+  return {r: rect.r, c: rect.c}; // 兜底：至少给一个起点，避免 BFS 空跑导致 0 颗豆子
+}
+
+function resolveSpawn(cell, half){
+  const size = spawnRectCells(half);
+  if(!cell || rectFits(cell.r, cell.c, size)) return cell;
+  for(let rad=1; rad<=8; rad++){
+    let best = null, bestD = Infinity;
+    for(let dr=-rad; dr<=rad; dr++){
+      for(let dc=-rad; dc<=rad; dc++){
+        if(Math.max(Math.abs(dr), Math.abs(dc)) !== rad) continue; // 只看当前这一圈
+        const r = cell.r + dr, c = cell.c + dc;
+        if(!rectFits(r, c, size)) continue;
+        const d = dr*dr + dc*dc;
+        if(d < bestD){ bestD = d; best = {r, c}; }
+      }
+    }
+    if(best){
+      console.warn('[pacman] 出生矩形 (' + cell.r + ',' + cell.c + ')+' + size + '×' + size + ' 放不下，已吸附到 (' + best.r + ',' + best.c + ')');
+      return best;
+    }
+  }
+  return cell;
+}
+function canFitAt(x, y, half){
+  const ax0 = x - half, ax1 = x + half;
+  const ay0 = y - half, ay1 = y + half;
+  for(const [wr,wc] of wallCells){
+    const wx0 = OFFSET_X + wc*CELL, wx1 = wx0 + CELL;
+    const wy0 = OFFSET_Y + wr*CELL, wy1 = wy0 + CELL;
+    if(wx1 > ax0 + 1e-6 && wx0 < ax1 - 1e-6 && wy1 > ay0 + 1e-6 && wy0 < ay1 - 1e-6) return false;
+  }
+  return true;
+}
+
+// 返回沿 dir 方向身体中心能到达的极限坐标（贴墙停）
+function wallLimit(x, y, half, dir){
+  const ax0 = x - half, ax1 = x + half;
+  const ay0 = y - half, ay1 = y + half;
+  let limit = null;
+  for(const [r,c] of wallCells){
+    const wx0 = OFFSET_X + c*CELL, wx1 = wx0 + CELL;
+    const wy0 = OFFSET_Y + r*CELL, wy1 = wy0 + CELL;
+    if(dir.x > 0){
+      // 身体右侧的墙：横向投影需与身体纵向范围相交
+      if(wy1 <= ay0 + 1e-6 || wy0 >= ay1 - 1e-6) continue;
+      if(wx0 >= ax1 - 1e-9){
+        const l = wx0 - half;
+        if(limit === null || l < limit) limit = l;
+      }
+    } else if(dir.x < 0){
+      if(wy1 <= ay0 + 1e-6 || wy0 >= ay1 - 1e-6) continue;
+      if(wx1 <= ax0 + 1e-9){
+        const l = wx1 + half;
+        if(limit === null || l > limit) limit = l;
+      }
+    } else if(dir.y > 0){
+      if(wx1 <= ax0 + 1e-6 || wx0 >= ax1 - 1e-6) continue;
+      if(wy0 >= ay1 - 1e-9){
+        const l = wy0 - half;
+        if(limit === null || l < limit) limit = l;
+      }
+    } else if(dir.y < 0){
+      if(wx1 <= ax0 + 1e-6 || wx0 >= ax1 - 1e-6) continue;
+      if(wy1 <= ay0 + 1e-9){
+        const l = wy1 + half;
+        if(limit === null || l > limit) limit = l;
+      }
+    }
+  }
+  return limit;
+}
+
+function moveAlong(ent, dt, dir){
+  if(dir === DIRS.NONE) return;
+  const step = ent.speed * dt;
+  const half = ent.half;
+
+  if(dir.x !== 0){
+    const limit = wallLimit(ent.x, ent.y, half, dir);
+    if(dir.x > 0) ent.x = limit === null ? ent.x + step : Math.min(ent.x + step, limit);
+    else          ent.x = limit === null ? ent.x - step : Math.max(ent.x - step, limit);
+  } else {
+    const limit = wallLimit(ent.x, ent.y, half, dir);
+    if(dir.y > 0) ent.y = limit === null ? ent.y + step : Math.min(ent.y + step, limit);
+    else          ent.y = limit === null ? ent.y - step : Math.max(ent.y - step, limit);
+  }
+}
+
+// 玩家：移动方向完全由当前按住的键决定（见 keydown/keyup），这里只负责平移。
+function updatePlayerMovement(dt){
+  moveAlong(player, dt, player.facing);
+}
+
+// 敌人：沿当前方向一直走，只在「被挡住」或「走到路口」时才重新选方向。
+// 细网格下若每格都决策会疯狂抖动，所以加了路口判定 + 冷却时间。
+function chooseEnemyDir(ent, r, c){
+  const options = [];
+  for(const key in DIRS){
+    const d = DIRS[key];
+    if(d === DIRS.NONE) continue;
+    if(isOpen(r,c,d)) options.push(d);
+  }
+  if(options.length === 0) return DIRS.NONE;
+  const reverse = {x:-ent.facing.x, y:-ent.facing.y};
+  let choices = options.filter(d => !(d.x===reverse.x && d.y===reverse.y));
+  if(choices.length === 0) choices = options;
+  // 大概率保持直行
+  if(ent.facing !== DIRS.NONE && choices.includes(ent.facing) && Math.random() < 0.72){
+    return ent.facing;
+  }
+  return choices[Math.floor(Math.random()*choices.length)];
+}
+
+function openDirCount(r,c){
+  let n = 0;
+  for(const key in DIRS){
+    const d = DIRS[key];
+    if(d === DIRS.NONE) continue;
+    if(isOpen(r,c,d)) n++;
+  }
+  return n;
+}
+
+function updateEnemyMovement(en, dt){
+  const step = en.speed * dt;
+  const {r,c} = currentCell(en);
+  if(r<0||r>=ROWS||c<0||c>=COLS) return;
+  const center = cellCenter(r,c);
+  const atCenter = Math.abs(en.x-center.x) <= step && Math.abs(en.y-center.y) <= step;
+
+  if(en.turnCd === undefined) en.turnCd = 0;
+  en.turnCd -= dt;
+
+  if(en.facing === DIRS.NONE){
+    en.x = center.x; en.y = center.y;
+    en.facing = chooseEnemyDir(en, r, c);
+  } else if(atCenter){
+    const blocked = !isOpen(r, c, en.facing);
+    const junction = openDirCount(r,c) >= 3;
+    if(blocked || (junction && en.turnCd <= 0)){
+      en.x = center.x; en.y = center.y;
+      en.facing = chooseEnemyDir(en, r, c);
+      en.turnCd = 0.35 + Math.random()*0.5;
+    }
+  }
+  moveAlong(en, dt, en.facing);
+}
+
+function updateEating(){
+  // 豆子放在走廊中线上，玩家不一定正好走在中线，
+  // 因此检查身体周围范围内的所有豆子。
+  // 2026-09-29 用户指定：**特殊字符豆的生效范围 = 它的可视尺寸**——
+  //   字形 17pt + 轮廓 Blur + 投影外扩约 ±23px（±1.87 格），玩家身体半宽 1 格，
+  //   碰到字形边缘即吃到 → 判定半径 = 1 + 1.87 ≈ 2.85 格（35.1px）。
+  //   隔墙误吃不会发生：隔 1 格墙的两颗豆中心距最少 3 格（36.9px）> 35.1px。
+  const {r,c} = currentCell(player);
+  const reach = CELL * 1.15;       // 普通豆：不变
+  const vReach = CELL * 2.85;      // 特殊豆：与可视尺寸一致
+  for(let rr=r-3; rr<=r+3; rr++){
+    for(let cc=c-3; cc<=c+3; cc++){
+      if(rr<0||rr>=ROWS||cc<0||cc>=COLS) continue;
+      if(!dotGrid[rr][cc]) continue;
+      const p = cellCenter(rr,cc);
+      const R = (valueGrid[rr][cc] > 0 ? vReach : reach);
+      if(Math.hypot(player.x-p.x, player.y-p.y) >= R) continue;
+      dotGrid[rr][cc] = false;
+      // 擦除 + 局部重画（2026-09-29 修复"部分特殊字符被吃掉"）：
+      //   旧实现只擦 ±1 格（36.9px 见方），而特殊字符字形（17pt + 轮廓 Blur + 投影）外扩约 ±23px——
+      //   ①特殊豆自己被吃时字形超出擦除框留残字；②擦除框会擦掉隔壁特殊豆字形的一部分。
+      //   擦 ±3 格（43.1px）已覆盖被吃豆的整字；但 4~5 格外的特殊豆其光晕仍会伸进擦除框
+      //   （光晕外扩 ±22.7px：d ≤ 43.1+22.7=65.8px=5.3 格内都会被削到），故重画半径取 5 格。
+      const cx = OFFSET_X + cc*CELL, cy = OFFSET_Y + rr*CELL;
+      const CR = 3, DR = 5; // 擦除半径 / 重画半径（格）
+      dotsCtx.clearRect(cx - CELL*CR, cy - CELL*CR, CELL*(2*CR+1), CELL*(2*CR+1));
+      for(let a=rr-DR; a<=rr+DR; a++){
+        for(let b=cc-DR; b<=cc+DR; b++){
+          if(a<0||a>=ROWS||b<0||b>=COLS) continue;
+          if(dotGrid[a][b]) drawDotCell(a, b);
+        }
+      }
+      eaten++;
+      // 高价值豆：额外加成本局的 +n%（吃一颗 = 正常 +1% **再额外**加 n%）
+      if(valueGrid[rr][cc] > 0){
+        bonusProgress += valueGrid[rr][cc];
+        valueGrid[rr][cc] = 0;
+      }
+      // 2026-10-08 用户指定：**每颗普通豆固定 +1%**（原为按 eaten/totalDots 比例折算——
+      //   358 颗豆吃到 100 颗即 progress=100 提前获胜，不再需要吃完全图）
+      progress = eaten + bonusProgress;
+      if(progress >= 100) progress = 100;
+      for(let i=0;i<4;i++){
+        if(progress >= (i+1)*25) revealed[i] = true;
+      }
+      if(progress >= 100 || eaten >= totalDots){
+        // 不再立刻切结算：进入"破解成功展示窗口"（角色换 Player_01 + Player_Eff），
+        // 停留 WIN_SHOWCASE_SEC 秒后才由 update() 切到 state='win'
+        cracked = true;
+        winShowT = WIN_SHOWCASE_SEC;
+      }
+    }
+  }
+}
+
+function updateCollision(dt){
+  if(invulnT > 0){ invulnT -= dt; return; }
+  for(const en of enemies){
+    const dist = Math.hypot(player.x-en.x, player.y-en.y);
+    if(dist < CELL*1.8){
+      lives--;
+      if(lives <= 0){
+        flashMsg = 'SYSTEM LOCKED — REBOOTING...';
+        flashMsgT = 999;
+        state = 'dead-restart';
+      } else {
+        resetPositions();
+      }
+      break;
+    }
+  }
+}
+
+function update(dt){
+  if(state !== 'playing') return;
+  // 破解成功展示窗口：冻结玩家/敌人/碰撞（避免展示期间被抓），只倒计时；到点切结算
+  if(winShowT > 0){
+    winShowT -= dt;
+    // 2026-09-29 用户指定：展示窗口结束后**不自动进结算**，而是停在那一刻（'win-hold'），
+    //   等待玩家再点一次屏幕 / 按任意键（见 confirmWinHold）才进入结算界面
+    if(winShowT <= 0){ winShowT = 0; state = 'win-hold'; }
+    return;
+  }
+  updatePlayerMovement(dt);
+  enemies.forEach(en => updateEnemyMovement(en, dt));
+  updateEating();
+  updateCollision(dt);
+}
+
+// ------------------------------------------------------------------
+// 渲染
+// ------------------------------------------------------------------
+// 墙体渲染：不再实心填充，而是**用霓虹线条把每个实心墙块围起来**（2026-09-15
+// 用户指定的美术效果，与关卡原型图一致）。实心域 = 仅 '#'；'o'（墙体内部空间
+// 与关卡外部）一律非实心 → 墙块外圈轮廓和**墙内部空间的内圈线条**都会被描出。
+function renderMazeLayer(){
+  mazeCtx.clearRect(0,0,mazeLayer.width, mazeLayer.height);
+  const src = activeMazeRows();
+
+  // 实心判定：仅 '#' 实心；网格外视为非实心
+  const solid = (r,c) => {
+    if(r<0 || r>=ROWS || c<0 || c>=COLS) return false;
+    return src[r][c] === '#';
+  };
+  // 收集轮廓边并追踪成闭合环线：实心格与非实心邻居的分界线构成「网格顶点图」，每个
+  // 顶点的度恒为偶数（0/2/4），全图可分解为闭合轮廓。沿轮廓行走，**每一个拐弯顶点**
+  // （凸角/凹角/左拐/右拐/两格对角接触）统一插入相同半径的圆弧，弧度全图一致。
+  const path = new Path2D();
+  const rad = Math.min(CELL * 0.3, 5);
+  const vkey = (x,y) => x + ',' + y;
+  const eid = (x1,y1,x2,y2) => (x1<x2 || (x1===x2 && y1<y2)) ? x1+','+y1+'>'+x2+','+y2 : x2+','+y2+'>'+x1+','+y1;
+  const adj = new Map(); // "vx,vy" -> [{x,y}, ...]（网格顶点，单位：格）
+  const addEdge = (x1,y1,x2,y2) => {
+    if(!adj.has(vkey(x1,y1))) adj.set(vkey(x1,y1), []);
+    if(!adj.has(vkey(x2,y2))) adj.set(vkey(x2,y2), []);
+    adj.get(vkey(x1,y1)).push({x:x2, y:y2});
+    adj.get(vkey(x2,y2)).push({x:x1, y:y1});
+  };
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      if(!solid(r,c)) continue;
+      if(!solid(r-1,c)) addEdge(c, r, c+1, r);      // 上边
+      if(!solid(r+1,c)) addEdge(c, r+1, c+1, r+1);  // 下边
+      if(!solid(r,c-1)) addEdge(c, r, c, r+1);      // 左边
+      if(!solid(r,c+1)) addEdge(c+1, r, c+1, r+1);  // 右边
+    }
+  }
+  const visited = new Set();
+  const toPx = (vx,vy) => [OFFSET_X + vx*CELL, OFFSET_Y + vy*CELL];
+  // 发射一条闭合轮廓：逐顶点判断，拐弯处 quadraticCurveTo 圆弧，直行 lineTo
+  const emitLoop = V => {
+    const n = V.length;
+    const dirs = [];
+    for(let i=0;i<n;i++){
+      const a = V[i], b = V[(i+1)%n];
+      dirs.push([Math.sign(b[0]-a[0]), Math.sign(b[1]-a[1])]);
+    }
+    const isCorner = i => {
+      const din = dirs[(i-1+n)%n], dout = dirs[i];
+      return din[0] !== dout[0] || din[1] !== dout[1];
+    };
+    // 起点优先选非拐角顶点，避免起终点处多一次弧
+    let s = 0;
+    for(let i=0;i<n;i++){ if(!isCorner(i)){ s = i; break; } }
+    const [px0, py0] = toPx(V[s][0], V[s][1]);
+    if(isCorner(s)){
+      const dout = dirs[s];
+      path.moveTo(px0 + dout[0]*rad, py0 + dout[1]*rad);
+    } else {
+      path.moveTo(px0, py0);
+    }
+    for(let step=1; step<=n; step++){
+      const i = (s + step) % n;
+      const [vx, vy] = toPx(V[i][0], V[i][1]);
+      const din = dirs[(i-1+n)%n], dout = dirs[i];
+      if(isCorner(i)){
+        path.lineTo(vx - din[0]*rad, vy - din[1]*rad);
+        path.quadraticCurveTo(vx, vy, vx + dout[0]*rad, vy + dout[1]*rad);
+      } else {
+        path.lineTo(vx, vy);
+      }
+    }
+    path.closePath();
+  };
+  for(const [key, nbs] of adj){
+    for(const nb of nbs){
+      const [sx, sy] = key.split(',').map(Number);
+      if(visited.has(eid(sx,sy,nb.x,nb.y))) continue;
+      // 追踪一条闭合轮廓
+      const loop = [[sx, sy]];
+      let cx = sx, cy = sy, tx = nb.x, ty = nb.y;
+      visited.add(eid(sx,sy,tx,ty));
+      loop.push([tx, ty]);
+      while(tx !== sx || ty !== sy){
+        const list = adj.get(vkey(tx,ty));
+        let next = null;
+        if(list.length === 2){
+          // 普通顶点：走另一条未访问的边
+          for(const e of list){
+            if(!visited.has(eid(tx,ty,e.x,e.y))){ next = e; break; }
+          }
+        } else {
+          // 度 4（两实心格对角接触）：按同一实心格所在象限配对转弯
+          const nw = solid(ty-1, tx-1), se = solid(ty, tx);
+          const inDx = Math.sign(tx - cx), inDy = Math.sign(ty - cy); // 进入方向
+          const from = (-inDx) + ',' + (-inDy);                       // 顶点看向来路的方向
+          const pair = (nw && se)
+            ? {'0,-1':'-1,0', '-1,0':'0,-1', '0,1':'1,0',  '1,0':'0,1'}   // N↔W、S↔E
+            : {'0,-1':'1,0',  '1,0':'0,-1',  '0,1':'-1,0', '-1,0':'0,1'}; // N↔E、S↔W
+          const [odx, ody] = pair[from].split(',').map(Number);
+          next = {x: tx + odx, y: ty + ody};
+          if(visited.has(eid(tx,ty,next.x,next.y))){ next = null; } // 防御：已走通则闭
+        }
+        if(!next) break;
+        visited.add(eid(tx,ty,next.x,next.y));
+        if(next.x === sx && next.y === sy) break; // 回到起点即闭环，起点不重复入列
+        loop.push([next.x, next.y]);
+        cx = tx; cy = ty; tx = next.x; ty = next.y;
+      }
+      emitLoop(loop);
+    }
+  }
+  // 描边两遍：外层同色软辉光 + 主线（2026-09-29 用户指定：**样式照 Main_Bg.png**）
+  //   素材实测：线色 **#44A4B2 = rgb(68,164,178)**，**没有亮白芯**（全图最亮像素也只有
+  //   rgb(70,172,187)），边缘是同色低透明度的软衰减；线宽 ≈3.7px @884×752，走廊约 31px
+  //   → 线宽 ≈ 0.12 格，故按 CELL 等比换算（CELL≈12.34 → 芯 1.5 / 辉光 3）
+  mazeCtx.save();
+  mazeCtx.lineJoin = 'round';
+  mazeCtx.lineCap = 'round';
+  mazeCtx.strokeStyle = 'rgba(70,172,187,0.30)';              // 外层软辉光（素材最亮色、更收敛）
+  mazeCtx.lineWidth = Math.max(1.6, CELL * 0.16);
+  mazeCtx.shadowColor = 'rgba(70,172,187,0.85)';
+  mazeCtx.shadowBlur = Math.max(2.5, CELL * 0.38);
+  mazeCtx.stroke(path);
+  mazeCtx.strokeStyle = '#46ACBB';                            // 主线：素材最亮色，无白芯
+  mazeCtx.lineWidth = Math.max(1, CELL * 0.095);
+  mazeCtx.shadowBlur = Math.max(1, CELL * 0.10);
+  mazeCtx.stroke(path);
+  mazeCtx.restore();
+}
+
+// 单颗豆子绘制（2026-09-29 抽出）：renderDotsLayer 与"吃豆后的局部重画"共用，
+//   保证特殊字符美术（字色/字号/字体/轮廓/投影）只有这一份实现
+function drawDotCell(rr, cc){
+  const p = cellCenter(rr, cc);
+  const ch = tokenGrid[rr][cc];
+  dotsCtx.textAlign = 'center';
+  dotsCtx.textBaseline = 'middle';
+  if(valueGrid[rr][cc] > 0){
+    // 高价值豆（2026-09-24 用户指定规格）：17 / Dirft / ffd012
+    //   + 轮廓 1 d55d21（Outline Blur 5）+ 投影 d55d21 偏移 x=3,y=3
+    dotsCtx.font = fpt(17, FONT_DRIFT);
+    dotsCtx.save();
+    dotsCtx.shadowColor = '#d55d21';
+    dotsCtx.shadowOffsetX = 3 * PT;
+    dotsCtx.shadowOffsetY = 3 * PT;
+    dotsCtx.shadowBlur = 0;
+    dotsCtx.fillStyle = '#d55d21';
+    dotsCtx.fillText(ch, p.x, p.y); // 投影层
+    dotsCtx.restore();
+    dotsCtx.shadowColor = '#d55d21';
+    dotsCtx.shadowBlur = 5 * PT;
+    dotsCtx.lineWidth = 1 * PT;
+    dotsCtx.strokeStyle = '#d55d21';
+    dotsCtx.strokeText(ch, p.x, p.y);
+    dotsCtx.shadowBlur = 0;
+    dotsCtx.fillStyle = '#ffd012';
+    dotsCtx.fillText(ch, p.x, p.y);
+  } else {
+    // 普通豆：严格按规格【Dirft 9pt fff6e0】（格子 12.34px > 9pt=12px，放得下）
+    dotsCtx.font = fpt(9, FONT_DRIFT);
+    dotsCtx.fillStyle = '#fff6e0';
+    dotsCtx.fillText(ch, p.x, p.y); // 与格子中心精确重叠
+  }
+}
+
+function renderDotsLayer(){
+  dotsCtx.clearRect(0,0,dotsLayer.width, dotsLayer.height);
+  dotsCtx.save();
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      if(!dotGrid[r][c]) continue;
+      drawDotCell(r, c);
+    }
+  }
+  dotsCtx.restore();
+}
+
+function drawCursorIcon(x,y,size,color,alpha){
+  ctx.save();
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  const w = size, h = size*0.8;
+  // 主体：圆角方框（终端/光标外框）
+  ctx.beginPath();
+  const rx = x-w/2, ry = y-h/2, rw=w, rh=h, rad=4;
+  ctx.moveTo(rx+rad, ry);
+  ctx.lineTo(rx+rw-rad, ry);
+  ctx.quadraticCurveTo(rx+rw, ry, rx+rw, ry+rad);
+  ctx.lineTo(rx+rw, ry+rh-rad);
+  ctx.quadraticCurveTo(rx+rw, ry+rh, rx+rw-rad, ry+rh);
+  ctx.lineTo(rx+rad, ry+rh);
+  ctx.quadraticCurveTo(rx, ry+rh, rx, ry+rh-rad);
+  ctx.lineTo(rx, ry+rad);
+  ctx.quadraticCurveTo(rx, ry, rx+rad, ry);
+  ctx.closePath();
+  ctx.stroke();
+  // 内部竖条：模拟文本光标 "|"
+  ctx.beginPath();
+  ctx.moveTo(x, ry+rh*0.18);
+  ctx.lineTo(x, ry+rh*0.82);
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // 底部两个小"脚"
+  ctx.beginPath();
+  ctx.rect(x-w*0.28, ry+rh, w*0.14, h*0.18);
+  ctx.rect(x+w*0.14, ry+rh, w*0.14, h*0.18);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPlayer(){
+  // Player_Eff（破解成功特效，700×700）：**只在吃光所有豆子后出现**，
+  //   **以角色当前位置为圆心**。2026-09-29 用户指定：**原图接入，不改变任何样式**——
+  //   即按素材原始像素 700×700 绘制（不缩放）、不加透明度/滤镜（α 保持 1）
+  if(cracked && ready('playerEff')){
+    ctx.save();
+    ctx.globalAlpha = 1; // 原样接入：显式置 1，避免继承前面绘制残留的 alpha（曾残留 0.13 导致几乎不可见）
+    ctx.drawImage(img.playerEff,
+      player.x - img.playerEff.naturalWidth/2,
+      player.y - img.playerEff.naturalHeight/2);
+    ctx.restore();
+  }
+  // 角色素材（2026-09-24 用户指派）：默认 = Player.png(70×70)；
+  //   破解成功（吃光所有豆子）= Player_01.png(64×56)——注意它**不是正方形**，
+  //   故高度按素材宽高比推算（宽度与默认态一致），避免纵向被拉伸
+  const useInv = invulnT > 0;
+  const pImg = cracked && ready('playerInv') ? img.playerInv : (ready('player') ? img.player : null);
+  if(pImg){
+    // 模型尺寸 = 碰撞体积（2 格宽，二者严格一致）
+    const size = CELL * 2.0;
+    const ph = size * pImg.naturalHeight / pImg.naturalWidth;
+    const alpha = useInv && (Math.floor(performance.now()/100) % 2 === 0) ? 0.4 : 1;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(pImg, player.x-size/2, player.y-ph/2, size, ph);
+    ctx.restore();
+  } else {
+    drawCursorIcon(player.x, player.y, CELL*0.85, COLOR_GREEN, 1);
+  }
+}
+
+function drawShield(x,y,size,color){
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 4;
+  const w = size, h = size*1.05;
+  ctx.beginPath();
+  ctx.moveTo(x-w/2, y-h/2);
+  ctx.lineTo(x+w/2, y-h/2);
+  ctx.lineTo(x+w/2, y+h*0.05);
+  ctx.quadraticCurveTo(x+w/2, y+h*0.42, x, y+h/2);
+  ctx.quadraticCurveTo(x-w/2, y+h*0.42, x-w/2, y+h*0.05);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// Prop.png 的红色实体圆只占文件的 54/88（实测红色 bbox 54×54 居中，四周是半透明光晕）。
+//   要让**可见红圆**画出来 = 玩家尺寸（2×PLAYER_HALF = 24.62px），整图需放大到：
+//   绘制尺寸 = 玩家尺寸 ÷ (54/88) ≈ 40.12px（居中后红圆 24.62px，光晕外扩到 ≈37.7px）
+const PROP_BODY_RATIO = 54 / 88;
+
+function drawEnemy(en){
+  // 2026-10-08 用户定稿：敌人用美术素材 **Prop.png**，**可见实体与玩家一样大**（24.62px）。
+  //   素材未加载/加载失败时回退到矢量红圆 + 盾。
+  if(ready('prop')){
+    const size = (en.half * 2) / PROP_BODY_RATIO;
+    ctx.drawImage(img.prop, en.x - size/2, en.y - size/2, size, size);
+    return;
+  }
+  ctx.save();
+  ctx.fillStyle = COLOR_RED;
+  ctx.strokeStyle = COLOR_RED;
+  ctx.shadowColor = COLOR_RED;
+  ctx.shadowBlur = 10;
+  ctx.lineWidth = 2;
+  const rad = CELL*0.95;
+  ctx.beginPath();
+  ctx.arc(en.x, en.y, rad, 0, Math.PI*2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  drawShield(en.x, en.y, CELL*0.95, '#eafff5');
+}
+
+function keyDisplayString(){
+  let out = '';
+  for(let i=0;i<4;i++){
+    out += revealed[i] ? KEY_DIGITS[i] : 'X';
+  }
+  return out;
+}
+
+// 右侧信息面板（最终效果图布局）：破解方法头部条 → 4 个 KEY 槽位 →
+// 完成度 + 分段进度条 → 底部 HP + 红心。迷宫在左，面板在右。
+// 2026-09-23 用户指定：头部条→进度条这一段整体向下平移 20 个单位（pt，26.67px）——
+//   实现：上半区用 pyTop = py + PANEL_TOP_DY_PT*PT，HP 行与面板底框仍锚定 py/ph 不动
+//   （面板高 800，整体下移会让底框超出电视屏幕内区下缘 ~25px，故只移上半区）
+const PANEL_TOP_DY_PT = 20;
+// 完成度区（Line 盒）相对破解方法区的纵向微调（单位 pt，负=上移）：
+//   2026-09-29 用户指定**向上平移 5 个单位**。drawUI 的 lineY 与 drawGameDeco 里
+//   Deco_24 的锚定公式（进度条位置）**共用此常量**，保证装饰件跟着完成度区走
+const INFO_LINE_DY_PT = -5;
+function drawUI(){
+  const px = PANEL_X;                  // 面板内容左缘（computeLayout 锚定内区右缘）
+  const py = OFFSET_Y;                  // 面板顶
+  const pyTop = py + PANEL_TOP_DY_PT * PT; // 上半区（头部条→进度条）的基准顶
+  const pw = PANEL_W, ph = MAZE_H;
+  ctx.save();
+  ctx.textBaseline = 'middle';
+  // 面板底（深色圆角；2026-09-23 用户要求去掉蓝色描边——那是代码画的，不是图片资源）
+  ctx.fillStyle = 'rgba(4,14,20,0.55)';
+  if(ctx.roundRect){
+    ctx.beginPath(); ctx.roundRect(px - 14, py - 14, pw + 14, ph + 28, 8); ctx.fill();
+  } else {
+    ctx.fillRect(px - 14, py - 14, pw + 14, ph + 28);
+  }
+  // 两个区域（2026-09-23 用户指定）：破解方法区=Message_Bg、完成度区=Line；
+  //   **均按素材原图尺寸绘制、不拉伸**；原青色"破解方法"头部条已按用户要求删掉
+  // 2026-09-29 用户指定：破解方法区/完成度区两块**整体向右平移 10 个单位（pt）**——
+  //   INFO_BOX_DX_PT 可调（0 = 回到面板内水平居中）。盒内所有元素（破解方法文字、KEY 槽位、
+  //   完成度文字/进度条/▲）都由 boxX 派生，会整块跟随；infoRight 也随盒右缘同步右移
+  const INFO_BOX_DX_PT = 10;
+  const boxX = px + Math.floor((pw - img.msgBg.naturalWidth) / 2) + INFO_BOX_DX_PT * PT;
+  const keyBoxY = pyTop;
+  if(ready('msgBg')) ctx.drawImage(img.msgBg, boxX, keyBoxY, img.msgBg.naturalWidth, img.msgBg.naturalHeight);
+  // 破解方法文字（2026-09-23 用户指定恢复，规格：fff6e0 / 13.5 / Normal）——
+  //   水平居中于 Message_Bg、垂直位于盒顶 15px 处（textBaseline=middle）；
+  //   2026-09-24 用户指定：整句先向下平移 5 个单位、随后再**向上**平移 2 个单位 → 净下移 3 单位
+  ctx.font = fpt(13.5, FONT_NORMAL);
+  ctx.fillStyle = '#fff6e0ff';
+  ctx.textAlign = 'center';
+  ctx.fillText('破解方法：获取价值字符，入侵终端', boxX + img.msgBg.naturalWidth/2, keyBoxY + 15 + 3 * PT);
+  // KEY 四个槽位（Item_Bg 框；未揭示=灰 ? ，已揭示=黄数字 Dirft）——垂直居中于 Message_Bg
+  const slotSize = Math.floor(PANEL_W * 0.19), slotGap = 12; // 槽位随面板宽缩放（≈90px）
+  const slotsX = boxX + (img.msgBg.naturalWidth - (slotSize*4 + slotGap*3)) / 2;
+  const slotsY = keyBoxY + Math.floor((img.msgBg.naturalHeight - slotSize) / 2);
+  for(let i=0;i<4;i++){
+    const sx = slotsX + i*(slotSize + slotGap);
+    if(ready('itemBg')) ctx.drawImage(img.itemBg, sx, slotsY, slotSize, slotSize);
+    ctx.font = fpt(45, FONT_DRIFT); // 规格：Dirft 45
+    if(revealed[i]){
+      // 规格（2026-09-23 用户更新，两态）：
+      //   未集齐 → 1CC6C9FF + 轮廓 1CC6C98C
+      //   **四个字母全部破解后** → FFBE13FF + 轮廓 B05E0E8C（金色）
+      //   两态均为 45 / Dirft / 轮廓 1 / Blur 5
+      const allDone = revealed.every(Boolean);
+      const col  = allDone ? '#FFBE13FF' : '#1CC6C9FF';
+      const ocol = allDone ? '#B05E0E8C' : '#1CC6C98C';
+      ctx.shadowColor = ocol;
+      ctx.shadowBlur = 5 * PT;
+      ctx.lineWidth = 1 * PT;
+      ctx.strokeStyle = ocol;
+      ctx.strokeText(KEY_DIGITS[i], sx + slotSize/2, slotsY + slotSize/2 + 2);
+      ctx.fillStyle = col;
+      ctx.fillText(KEY_DIGITS[i], sx + slotSize/2, slotsY + slotSize/2 + 2);
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.fillStyle = '#575654FF'; // 规格：未揭示 ? —— 575654FF / 45 / Dirft（Anton-Regular）
+      ctx.fillText('?', sx + slotSize/2, slotsY + slotSize/2 + 2);
+    }
+  }
+  // 完成度区（Line.png 原图 442×94，不拉伸）
+  //   2026-09-29 用户指定：**向上平移 5 个单位（pt）** → INFO_LINE_DY_PT；
+  //   盒内完成度文字/进度条/▲（progY、barY、ay）都由 lineY 派生，会整块跟随
+  const lineY = keyBoxY + img.msgBg.naturalHeight + 24 + INFO_LINE_DY_PT * PT;
+  if(ready('line')) ctx.drawImage(img.line, boxX, lineY, img.line.naturalWidth, img.line.naturalHeight);
+  // 完成度：13%（一行左对齐；2026-09-23 参考图样式——白色小字，替代原右侧 45pt 大百分比）
+  //   2026-09-23 用户指定字号：标签「完成度」= fff6e0 / 13.5 / Normal；
+  //   初始（progress=0）的百分比数字用 **4a4a4a**（灰），进度 >0 后仍是 fff6e0
+  const progY = lineY + 26;
+  ctx.textAlign = 'left';
+  ctx.font = fpt(13.5, FONT_NORMAL);
+  ctx.fillStyle = '#fff6e0';
+  ctx.fillText('完成度：', boxX + 25, progY);
+  const lblW = ctx.measureText('完成度：').width;
+  ctx.fillStyle = (progress === 0 ? '#4a4a4a' : '#fff6e0');
+  ctx.fillText(progress + '%', boxX + 25 + lblW + 2, progY);
+  // 分段进度条（Bar_Normal 轨道 + 填充按比例裁切；位于完成度盒内）
+  //   填充素材 2026-09-24 用户指定：**进度条满（100%）时改用 Bar_State_02（黄）**，
+  //   未满时是 Bar_State_01（蓝）；满时整条画满（不再按比例裁切）
+  const barX = boxX + 25, barW = img.line.naturalWidth - 50;
+  const barY = lineY + 44;
+  const barH = ready('barNormal') ? Math.max(8, barW * img.barNormal.naturalHeight / img.barNormal.naturalWidth) : 12;
+  if(ready('barNormal')) ctx.drawImage(img.barNormal, barX, barY, barW, barH);
+  const barFull = progress >= 100;
+  const fillKey = barFull ? 'barYel' : 'barBlue';   // Bar_State_02 / Bar_State_01
+  if(ready(fillKey) && progress > 0){
+    const fr = barFull ? 1 : progress/100;          // 裁切比例（满条 = 1）
+    const fw = Math.max(2, barW * fr);
+    ctx.drawImage(img[fillKey], 0, 0, img[fillKey].naturalWidth * fr, img[fillKey].naturalHeight, barX, barY, fw, barH);
+  }
+  // 箭头记号 ×3（原尺寸 22×14；2026-09-23 参考图样式，位于进度条宽的 1/4、1/2、3/4 处）
+  // 完成度达到对应比例（25/50/75%）→ 该记号换成黄色 Arrow_Yellow，并**保持到下一界面**
+  //   （progress 在当局内单调递增，故"达到即点亮"天然就是持久状态；新开一局自动重置）
+  {
+    const ay = barY + barH + 10;
+    [0.25, 0.5, 0.75].forEach(fr => {
+      const lit = progress >= fr * 100;                       // 点亮条件（达到即保持）
+      const key = (lit && ready('btnHLY')) ? 'btnHLY' : 'btnHL';
+      if(!ready(key)) return;
+      const m = img[key];
+      ctx.drawImage(m, barX + barW * fr - m.naturalWidth/2, ay, m.naturalWidth, m.naturalHeight);
+    });
+  }
+  // HP（面板底部，右对齐文本 + 右对齐红心行）
+  // 2026-09-24 用户按参考图定稿：整体 16 / Dirft；字色分三段——
+  //   **当前生命值数字 = ffd012（黄）、「HP」与「/3」= fff6e0（奶白）**；轮廓 d55d21 保留（2026-09-28 用户指定：**阴影去掉**，投影层整段删除）
+  const hpY = py + ph - 96;
+  ctx.textAlign = 'right';
+  const hpLives = String(Math.max(lives, 0)), hpRest = '/3';
+  ctx.font = fpt(16, FONT_DRIFT);
+  const hpW1 = ctx.measureText(hpLives).width, hpW2 = ctx.measureText(hpRest).width;
+  //   完成度两个盒子（原图 442 宽、面板内水平居中）的右缘；HP 数字串与红心行的右缘
+  //   由面板右缘（px+pw）改到该线（各左移 18px）
+  // 2026-09-28 用户指定：信息区每个区域的**最右侧对齐**——对齐线 = 两个盒子（Message_Bg/Line，
+  //   原图 442 宽、面板内水平居中）的右缘；HP 数字串与红心行的右缘均由面板右缘改到该线
+  const infoRight = boxX + img.msgBg.naturalWidth;
+  const hpX0 = infoRight - (hpW1 + hpW2); // 数字串右缘 = 对齐线
+  ctx.textAlign = 'left'; // 阴影/描边/填色全部按左对齐 + hpX0，保证各层重合
+  // 阴影（投影 d55d21 x3 y3）已于 2026-09-28 按用户要求整段删除——只保留描边
+  ctx.shadowColor = '#d55d21';
+  ctx.shadowBlur = 5 * PT;
+  ctx.lineWidth = 1 * PT;
+  ctx.strokeStyle = '#d55d21';
+  ctx.strokeText(hpLives + hpRest, hpX0, hpY);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#ffd012';
+  ctx.fillText(hpLives, hpX0, hpY);          // 当前生命值 → 黄
+  ctx.fillStyle = '#fff6e0';
+  ctx.fillText(hpRest, hpX0 + hpW1, hpY);    // /3 → 奶白
+  // HP 标签「HP」（在数字串左侧，间隔 6px）
+  const hpLblW = ctx.measureText('HP').width;
+  ctx.fillStyle = '#fff6e0';
+  ctx.fillText('HP', hpX0 - 6 - hpLblW, hpY);
+  ctx.textAlign = 'right';
+  // 红心（Life.png 原图 60×60，2026-09-23 用户指定原尺寸不拉伸）：右下角。
+  //   2026-09-28 用户指定：**最右一颗的右缘与上方数字串（3/3）的右缘对齐**——
+  //   2026-09-28：数字串与红心行的右缘一起改到 infoRight（= 两盒右缘），同属一条对齐线；
+  //   2026-09-29 用户两次指定各右移 10、5 个单位 → **累计 15 单位（pt）**（相对累加）。
+  //   此时红心右缘 = 1652.33 + 20 = 1672.33，**超出面板右缘（1657）约 15.33px**
+  //   （仍在电视屏幕内区内，右缘 1705，不会被裁掉；只是探出深色面板底之外）。
+  //   若要收回面板内：0 = 回到对齐线（1652.33）、4 = 正好贴面板右缘（≈1657）
+  const HEART_DX_PT = 15;
+  const heartSize = ready('life') ? img.life.naturalWidth : 60, heartGap = 12;
+  const heartsRight = infoRight + HEART_DX_PT * PT;
+  for(let i=0;i<3;i++){
+    const hx = heartsRight - (3 - i)*(heartSize + heartGap) + heartGap;
+    const hy = hpY + 14;
+    if(ready('life')){
+      if(i < lives){
+        ctx.drawImage(img.life, hx, hy, heartSize, heartSize);
+      } else {
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.drawImage(img.life, hx, hy, heartSize, heartSize);
+        ctx.restore();
+      }
+    }
+  }
+  ctx.restore();
+  // 顶部中央：编辑器自定义关卡提示（仅本地覆盖生效时显示）
+  if(window.MAZE_ROWS_OVERRIDE){
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffb431';
+    ctx.shadowColor = '#ffb431';
+    ctx.font = 'bold 12px Consolas, monospace';
+    ctx.fillText('CUSTOM MAP (editor)', OFFSET_X + MAZE_W/2, OFFSET_Y - 6);
+  }
+}
+
+// 通用 SPACE 胶囊按钮（开始/结束界面共用）：Button.png + SPACE 键帽 + 文字，悬停发光
+function drawSpaceButton(b, label){
+  ctx.save();
+  if(hoverStartBtn){
+    ctx.shadowColor = 'rgba(255,246,224,0.9)';
+    ctx.shadowBlur = 16;
+  }
+  if(ready('button')){
+    // 2026-09-23 恢复原尺寸：按 Button.png 原图像素绘制（此前拉成 b.w×b.h）
+    ctx.drawImage(img.button, b.x + (b.w - img.button.naturalWidth)/2, b.y + (b.h - img.button.naturalHeight)/2);
+  } else {
+    ctx.fillStyle = '#f5edd8';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+  }
+  ctx.restore();
+  // 按钮上的 Arrow_Yellow 已删（2026-09-23 用户指定）：Arrow_Yellow 只用于进度条下的点亮记号
+  // SPACE 键帽（深色小胶囊 + SPACE 字样）
+  //   2026-09-29 用户定稿：**Bold 族、字号 16px、字间距 1px、倾斜度 0.15**；字色仍为奶白 #f5edd8
+  //   （键帽宽度必须在同一 font + letterSpacing 下测量，否则字会溢出键帽）
+  ctx.font = 'bold 16px ' + FONT_BOLD;
+  ctx.letterSpacing = '1px';
+  const spaceW = ctx.measureText('SPACE').width + 18;
+  ctx.letterSpacing = '0px';
+  const chipH = 24, chipX = b.x + 12, chipY = b.y + b.h/2 - chipH/2;
+  ctx.fillStyle = '#26221e';
+  if(ctx.roundRect){
+    ctx.beginPath();
+    ctx.roundRect(chipX, chipY, spaceW, chipH, 4);
+    ctx.fill();
+  } else {
+    ctx.fillRect(chipX, chipY, spaceW, chipH);
+  }
+  ctx.save();
+  ctx.font = 'bold 16px ' + FONT_BOLD;
+  ctx.letterSpacing = '1px';
+  ctx.fillStyle = '#f5edd8';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.translate(chipX + 9, chipY + chipH/2 + 1);
+  ctx.transform(1, 0, -0.15, 1, 0, 0); // 倾斜度 0.15（绕文字锚点斜切，与主文字同法）
+  ctx.fillText('SPACE', 0, 0);
+  ctx.restore();
+  ctx.letterSpacing = '0px';
+  // 按钮文字（规格：字色 19191BFF、字号 16、Bold、倾斜 0.15、字间距 80≈0.08em；
+  //   斜切需绕文字锚点，故 translate 到文字起点后再 transform）
+  ctx.save();
+  ctx.font = fpt(16, FONT_BOLD);
+  ctx.letterSpacing = LS80(16); // 字间距 = 字号×80/1000
+  ctx.fillStyle = '#19191BFF';
+  ctx.translate(chipX + spaceW + 14 + BTN_LABEL_DX_PX, b.y + b.h/2 + 1);
+  ctx.transform(1, 0, -0.15, 1, 0, 0);
+  ctx.fillText(label, 0, 0);
+  ctx.restore();
+  ctx.letterSpacing = '0px';
+  ctx.textAlign = 'center';
+}
+
+// ------------------------------------------------------------------
+// 对局结束界面（美术视觉稿）：入侵成功(绿)/入侵失败(红) 共用结构，
+// 样式与开始界面同族（规格大标题红/绿组：53 Bold、同色 7A 轮廓、Blur 27）
+// ------------------------------------------------------------------
+function drawEndScreen(kind){
+  const win = kind === 'win';
+  // 三档字体规格（2026-09-23 用户指定）：大字=主题色 FF / 轮廓同色 7A；副标题 FFF6E0E6；
+  //   副标题重影=主题暗色 33（失败 DD304233 / 成功 2FE47333）
+  const theme = win
+    ? { set: 'green', color: '#2FE473FF', outline: '#2FE4737A', ghost: '#2FE47333', icon: 'titleI1', title: '入侵成功！', sub: '秘密字符已全部破解' }
+    : { set: 'red',   color: '#F72940FF', outline: '#F729407A', ghost: '#DD304233', icon: 'titleI2', title: '入侵失败！', sub: '生命值已耗尽' };
+  drawBackground();
+  drawScreenDeco(theme.set); // 主题装饰层：绿/红套散件 + 对应帧组箭头（原色）
+  const sc = screenCenter();
+  const cx = sc.x;
+  const centerY = sc.r.y + sc.r.h * 0.47;
+  // 大字高度与顶边（与开始界面同一套相对关系）
+  //   + CLUSTER_DY_PT*PT：与开始界面一致的标题簇上移（2026-09-23 三界面对齐）
+  const th = sc.r.w * 0.85 * TEXT3_AR;
+  const textTop = centerY - th/2 + CLUSTER_DY_PT * PT;
+  // 主标题「入侵成功！」/「入侵失败！」（规格：53 Bold、轮廓 1px 同色 7A、Blur 27）
+  const titleY = textTop + th * 0.57 + 10; // 2026-09-16 用户指定：与开始界面一致下移 10px（副标题随行）
+  // 大字背面的美术资源（2026-09-23 用户指定）：成功=Deco_26(850×316) / 失败=Deco_25(571×316)。
+  // 按素材原始像素居中于大字（实测两张可见内容都居中 cx≈0.50、cy≈0.498，画布四周透明），
+  // 画在标题字之前 = 位于大字背面（图标/大字/副标题/按钮都在其上层）
+  const backKey = win ? 'deco26' : 'deco25';
+  if(ready(backKey)){
+    ctx.drawImage(img[backKey], cx - img[backKey].naturalWidth/2, titleY - img[backKey].naturalHeight/2);
+  }
+  // 界面中间的大字（2026-09-23 用户指定素材）：成功=Text_02、失败=Text_01 ——
+  //   **按素材原始像素**绘制，中心与原大字位置一致（(cx, textTop + th/2)），不改尺寸不移位置。
+  //   ★画在背板（Deco_26/25，不透明黑底）**之后** → 不会被它的黑底盖住
+  const bigKey = win ? 'text2' : 'text1';
+  if(ready(bigKey)){
+    const im = img[bigKey];
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.shadowColor = theme.outline;
+    ctx.shadowBlur = 14;
+    ctx.drawImage(im, cx - im.naturalWidth/2, textTop + th/2 - im.naturalHeight/2);
+    ctx.restore();
+  }
+  // 状态图标（胜=绿机器人 TitleIcon_01 / 败=红叉眼 TitleIcon_02）：
+  // 与开始界面同一套标题簇几何 —— 缩小、整体位于标题字上方（2026-09-21 参考图）
+  if(ready(theme.icon)){
+    const ih = TITLE_CLUSTER.iconH;
+    const iw = ih * img[theme.icon].naturalWidth / img[theme.icon].naturalHeight;
+    // 与开始界面同一套偏移（TITLE_ICON_DY_PT）：2026-09-23 用户要求结算界面图标也对齐
+    const iy = titleY - 53 * PT * 0.44 - TITLE_CLUSTER.gapIconTitle - ih * TITLE_CLUSTER.iconBottomFrac + TITLE_ICON_DY_PT * PT;
+    ctx.save();
+    ctx.shadowColor = theme.color;
+    ctx.shadowBlur = 22;
+    ctx.drawImage(img[theme.icon], cx - iw/2, iy, iw, ih);
+    ctx.restore();
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = fpt(53, FONT_BOLD);
+  ctx.shadowColor = theme.outline; // 规格：Outline Blur 27 的辉光=轮廓颜色（主题 7A）
+  ctx.shadowBlur = 27 * PT;
+  ctx.lineWidth = 1 * PT;
+  ctx.strokeStyle = theme.outline;
+  ctx.strokeText(theme.title, cx, titleY);
+  ctx.fillStyle = theme.color;
+  ctx.fillText(theme.title, cx, titleY);
+  ctx.shadowBlur = 0;
+  // 副标题（规格：15 Normal FFF6E0E6）+ 底层重影（规格：主题暗色 33 / 15 / Normal，
+  //   与开始界面同一套偏移量 SUB_GHOST_DX/DY；2026-09-23 用户指定）
+  ctx.font = fpt(15, FONT_NORMAL);
+  const subY = titleY + TITLE_CLUSTER.subOffset;
+  ctx.fillStyle = theme.ghost;
+  ctx.fillText(theme.sub, cx + SUB_GHOST_DX, subY + SUB_GHOST_DY);
+  ctx.fillStyle = '#FFF6E0E6';
+  ctx.fillText(theme.sub, cx, subY);
+  // 「再来一次」按钮（SPACE/ENTER/点击重开，逻辑与开始界面一致）
+  drawSpaceButton(currentButtonRect(), '再来一次');
+  // 屏幕顶部氛围光（2026-09-23 用户指定）：成功界面=Light_01、失败界面=Light_02；
+  //   **图片顶边贴住电视屏幕内区顶边**，宽度=内区宽（按素材宽高比推算），水平居中。
+  //   ★绘制 α=1：素材自身就是极淡辉光（实测顶部辉光像素 α 仅 63/255≈0.25，其余全透明），
+  //   再乘 0.13/0.20 实际只剩 0.03~0.04，肉眼不可见（用户两轮反馈"没看到"）→ 不额外减淡。
+  //   ★画在**本界面所有元素之后**（最上层）——此前画在标题簇之前，被 Text_03/Deco_25 等
+  //   不透明黑底画布盖住
+  const lightKey = win ? 'light1' : 'light2';
+  if(ready(lightKey)){
+    const im = img[lightKey];
+    const lw = sc.r.w, lh = lw * im.naturalHeight / im.naturalWidth;
+    ctx.drawImage(im, sc.r.x + sc.r.w/2 - lw/2, sc.r.y, lw, lh);
+  }
+  // 故障条整图置顶（最后画，保证右上角的条不被背板/黑底盖住；与开始界面同一套对位）
+  drawGlitchImage(theme.set);
+  // 编辑器自定义关卡提示（覆盖生效中才显示）
+  if(window.MAZE_ROWS_OVERRIDE){
+    ctx.font = 'bold 12px Consolas, monospace';
+    ctx.fillStyle = '#ffb431';
+    ctx.fillText('CUSTOM MAP (editor)', cx, 16);
+  }
+}
+
+// ------------------------------------------------------------------
+// 界面装饰层（开始/结算界面共用，按美术稿蓝框位置摆放）：
+// Deco 散件分橙/绿/红三套主题色，Arrow_06 白色箭头按主题染色。
+// ------------------------------------------------------------------
+// 各界面箭头叠放帧组（2026-09-16 美术指定：每侧 3 张叠出 »» 拖尾层次；按实→虚排序，
+// 一律使用图片原色，不做任何染色、不播序列帧）：
+//   开始界面=Arrow_01/02/03（白，实→虚）  失败=Arrow_06/05/04（红，实→虚）  成功=Arrow_09/08/07（绿，实→虚）
+const DECO_ARROW_FRAMES = { orange: [1,2,3], red: [6,5,4], green: [9,8,7] };
+// 两侧箭头的逐帧横移（**单位 px**，负 = 左移），按帧序号索引（帧[0]/[1]/[2] = 各主题的第 1/2/3 帧）：
+//   右侧：Arrow_02 两次各左移 5px → 累计 10px
+//   左侧：**净偏移**（已含"与右侧镜像对称"那一项）：Arrow_02 -20、Arrow_03 -20、Arrow_01 0
+//   2026-09-29 补充：**未配置的主题默认套用 orange 的值**，使成功/失败界面与初始界面完全对齐
+const ARROW_RIGHT_DX_PX = { orange: [0, -10, 0] };
+const ARROW_LEFT_DX_PX  = { orange: [0, -20, -20] };
+// 三界面统一几何基准（2026-09-29）：**锚点与步进固定**，不再随主题首帧宽度漂移——
+//   此前橙/绿首帧宽 98、红 102，导致红组整组偏左 4px、步进 56.1 vs 53.9，三界面间距不一致。
+//   基准取初始界面（橙套）首帧 Arrow_01 的原始宽 98（各帧仍按**自己的原图像素**绘制，不缩放）
+const ARROW_REF_W  = 98;
+const ARROW_STEP   = ARROW_REF_W * 0.55; // 53.9
+// 注意：这里的键必须与 ASSETS 的键完全一致（ASSETS 中 1~9 号**不带前导零**：deco1…deco9）。
+// 2026-09-20 修复：green 的 n1110 与 red 的 textTL/big/n1110/b101/hexm 原先写成 'deco09'/'deco05'
+// 等带前导零的键 → ready() 恒为 false 被静默跳过（绿套 1110 块、红套 5 个文本块一直没画出来）。
+const DECO_SETS = {
+  orange: { glitch: 'deco30', textTL: 'deco20', big: 'deco16', n1110: 'deco18', b101: 'deco17', hexm: 'deco19', hex: 'deco15', corner: 'deco3' },
+  // 2026-09-23 用户指定故障条归属：成功界面=Deco_28、失败界面=Deco_29（初始界面仍是 Deco_30）
+  // 2026-09-29 用户指定：成功界面故障条美术**换成 image.png**（724×298，绿色碎片 #2FE473，
+  //   与 Deco_28 同尺寸同布局，但碎片为成功主题绿色）
+  // 2026-10-09 用户整理：旧 Deco_29（红，与 Deco_28 完全相同）已删，image.png 改名为 Deco_29（绿）→
+  //   失败界面改用 deco28（红，实测均色 #F72940，与原 Deco_29 一致），成功界面 glitchWin 指向改名后的 Deco_29
+  green:  { glitch: 'glitchWin', textTL: 'deco10', big: 'deco13', n1110: 'deco9',  b101: 'deco12', hexm: 'deco14', hex: 'deco11', corner: 'deco1' },
+  red:    { glitch: 'deco28', textTL: 'deco5',  big: 'deco8',  n1110: 'deco4',  b101: 'deco7',  hexm: 'deco6',  hex: 'deco21', corner: 'deco2' },
+};
+const decoMissingWarned = new Set(); // 缺键告警去重（只在控制台提示一次）
+// 标题簇（中间描边字/头像/大字/大字发光背景/白色小字）整体纵向偏移（单位 pt，负=上移）：
+//   2026-09-23 用户指定初始界面这一簇**向上平移 20**，随后要求成功/失败界面也对齐 → 三界面共用
+const CLUSTER_DY_PT = -20;
+// 副标题重影偏移（px）：右 16.67（= 初始量得 10px + 用户指定右移 5pt 6.67px）、下 13.33（=10pt）。
+//   2026-09-23：先按截图给初始界面量得 10；初始界面再右移 5 个单位；随后成功/失败界面也对齐 → 三界面统一
+const SUB_GHOST_DX = 10 + 5 * PT, SUB_GHOST_DY = 10 * PT;
+// 标题图标整体下移量（单位 pt，三界面统一）——2026-09-23 用户先指定 TitleIcon_03 下移 10，
+//   随后要求成功/失败界面图标也对齐，故抽成常量，开始/结算共用
+const TITLE_ICON_DY_PT = 10;
+// 故障条整图的按主题微调（单位 pt，[dx, dy]）：右移 40（两次各 20 累加）。
+//   dy=0：上移 20 已并入大字中心公式（含 CLUSTER_DY_PT），避免双重偏移
+const GLITCH_NUDGE_PT = { orange: [40, 0], green: [40, 0], red: [40, 0] };
+// [角色, x比例, y比例, 宽占内区比例, 锚点?]（按视觉稿标定，全部在电视屏幕内区里）
+// 锚点缺省 'c'：(x,y)=块中心占内区比例；'bl'：(x,y)=左/下边距比例，块贴屏幕左下角；
+//            'tr'：(x,y)=右/上边距比例，块贴屏幕右上角
+const DECO_LAYOUT = [
+  // 注意绘制顺序＝数组顺序（后面的画在上面）：textTL 放最后，
+  // 让 □□&^! 小条叠在 Deco_16 大文本块前面（2026-09-21 参考图的层叠构图）
+  ['n1110',  0.93,  0.06,  0.08],       // 右上 1110 小块
+  ['hexm',   0.33,  0.62,  0.19],       // 中左 多行 hex
+  ['b101',   0.66,  0.55,  0.08],       // 中右 0100101
+  ['hex',    0.006, 0.992, 0.20, 'bl'], // 左下 hex 块（2026-09-20 用户指定贴屏幕左下角；Deco_15/11/21 三主题共用此位）
+  ['big',    0.92,  0.84,  0.12],       // 右下 大文本块（橙套已覆写到左上，见 DECO_LAYOUT_OVERRIDES）
+  // n1110b（下方复用 Deco_18 的 1110 副本）2026-09-22 按用户要求删掉——与右上角贴角的
+  // Deco_18(n1110) 重复，屏幕上出现两个 1110 块
+  ['textTL', 0.24,  0.18,  0.16],       // 左上 □□&^!（最上层）
+];
+// 按主题覆写布点（2026-09-20 用户对失败界面逐块红/黄框标定，只影响红套 Deco_04~08；
+// 橙/绿两套仍走上面的通用位）。格式与 DECO_LAYOUT 表项相同（可含锚点），按键覆盖。
+const DECO_LAYOUT_OVERRIDES = {
+  orange: {
+    // Deco_16（大文本块）：2026-09-21 用户指定——原图不动（不改背景/大小/裁剪/加效果），
+    // 水平居中于中央描边大字左起两个字、块底边在字顶上方 20pt（fy=间隙，单位 pt = 26.67px）
+    big: [0, 20, 0.12, 'text3L2'],
+    // Deco_20（□□&^! 小条）：2026-09-22 用户要求放回并摆到 Deco_19 的正下方（红框标定，
+    //   纵向中心 ≈ 内区 0.85）。'belowHexm' = 与 hexm(Deco_19) 同一中轴；此前 textTL:null 作废。
+    //   fw='nat' = 按素材原始像素 140×50 导入，不做任何缩放（再次强调"原封不动"）。
+    //   2026-09-23 改为 'belowHexmL'：与 Deco_19 **最左侧对齐**（原 'belowHexm' 是中轴对齐）
+    textTL: [0, 0.85, 'nat', 'belowHexmL'],
+    // Deco_17（0100101 小块）：2026-09-22 用户要求左移到 Deco_16 的正下方 ——
+    //   'belowBig' = 与 Deco_16 同一中轴（画布 x≈445），纵向位置不变（内区 0.718）
+    b101: [0, 0.718, 0.08, 'belowBig'],
+    // Deco_18（1110 小块）→ 贴屏幕内侧右上角（2026-09-22；'tr' 的 fx/fy = 右/上边距比例，
+    //   用户反馈 18/8px 还有空隙 → 边距归零，块直接贴住内区右上角）
+    n1110: [0, 0, 0.08, 'tr'],
+    // Deco_19（多行 hex 大块）：2026-09-22 用户要求——左缘对齐中央大字"倒数第二个字"的左缘，
+    //   纵向在字上方（参考图标定，中心占内区 0.173）；偏移累计：左 45pt、下 25pt
+    //   （左偏 10 + 09-23 左移 20 + 本次再左移 15；Deco_20 锚定 hexm 左缘，随之一起移动。
+    //    若用户要的是"总共 15"而非累加，把 fx 改回 15 即可）
+    hexm: [45, 0.173, 0.19, 'text3c7left', 25],
+  },
+  red: {
+    // Deco_05（□□&^! 小条）：2026-09-23 与橙套 Deco_20 完全对齐（原图尺寸 + 与 hexm 左缘对齐 + 同纵向）
+    textTL: [0, 0.85, 'nat', 'belowHexmL'],
+    n1110:  [0, 0, 0.08, 'tr'],          // Deco_04 1110 小块 → 贴屏幕内侧右上角（与橙套一致，边距 0）
+    // Deco_06 多行 hex → 与橙套完全对齐（左缘对齐倒数第二个大字；左偏 45pt/下 25pt，2026-09-23 同步）
+    hexm:   [45, 0.173, 0.19, 'text3c7left', 25],
+    b101:   [0, 0.718, 0.08, 'belowBig'], // Deco_07 0100101 → 与大文本块同轴的正下方（与橙套一致）
+    big:    [0, 20, 0.12, 'text3L2'],    // Deco_08 大文本块 → 与橙套同一对位（字顶上方 20pt）
+  },
+  green: {
+    // Deco_10（□□&^! 小条）：2026-09-23 与橙套 Deco_20 完全对齐（原图尺寸 + 与 hexm 左缘对齐 + 同纵向）
+    textTL: [0, 0.85, 'nat', 'belowHexmL'],
+    big:   [0, 20, 0.12, 'text3L2'],     // Deco_13 大文本块 → 同上（2026-09-21 三套统一对位）
+    b101:  [0, 0.718, 0.08, 'belowBig'], // Deco_12 0100101 → 与大文本块同轴的正下方（与橙套一致）
+    n1110: [0, 0, 0.08, 'tr'],           // Deco_09 1110 小块 → 贴屏幕内侧右上角（与橙/红一致）
+    hexm:  [45, 0.173, 0.19, 'text3c7left', 25], // Deco_14 多行 hex → 与橙套完全对齐（左偏 45pt，2026-09-23 同步）
+  },
+};
+// 屏幕内区中心（开始/结算界面内容锚点）
+function screenCenter(){
+  const r = tvScreenRect();
+  return { x: r.x + r.w/2, y: r.y + r.h/2, r };
+}
+// Text_03 镂空大字宽高比（1168×124 实测）：th = 0.85×内区宽×TEXT3_AR（65 行版 ≈138px）。
+// 09-21 起：图标/标题/副标题/按钮的间距改由 TITLE_CLUSTER 常量定义（图标不再压大字）；
+// 箭头高=th 且竖直中心=大字带中心。
+const TEXT3_AR = 124 / 1168;
+// Text_03（中央橙色描边大字）实测字形度量，供装饰锚点用：
+//   左起两个字（簇1 x1..131 + 簇2 x147..278）合并区间中心 = 图宽的 11.94%；
+//   墨迹顶边贴画布顶（占比 0），底边 82.26%。
+const TEXT3_L2_CENTER = 0.1194;
+const TEXT3_INK_TOP   = 0;
+const TEXT3_C7_LEFT   = 0.7611; // 倒数第二个字形簇（第 7 簇）的左缘占图宽比例
+// 标题簇五要素（头像/黄色大字/白色小字/按钮区域）的间距关系 —— 2026-09-21 按用户参考图重调：
+//   图标缩小并整体抬到标题字上方（不再压住大字）、副标题与标题拉开、按钮与副标题拉开。
+//   开始/成功/失败三界面共用。图标素材 272×230，可见内容实测：高占 58.3%、顶边 18.7%、底边 77%。
+const TITLE_CLUSTER = {
+  iconH: 180,           // 图标绘制高 → 视觉高 ≈105px（原 260 → 视觉 ≈152，偏大）
+  iconTopFrac: 0.187,   // 素材可见内容顶边
+  iconBottomFrac: 0.77, // 素材可见内容底边
+  gapIconTitle: 26,     // 图标可见底边 ↔ 标题字顶（原：图标下沿压进标题约 50px）
+  subOffset: 67,        // 副标题中心 = 标题中心 + 67（原 48 → 字底到副标题顶仅 11px）
+  btnExtra: 183         // 按钮顶 = centerY + 183（原 118 → 副标题到按钮仅 20px）
+};
+function drawScreenDeco(setName){
+  const set = DECO_SETS[setName];
+  if(!set) return;
+  const sr = tvScreenRect();
+  ctx.save();
+  // 主题色角落装饰（Deco_03橙/01绿/02红：右下角渐变+二进制数字列，圆角对齐屏幕右下）。
+  // 此前错误地全画布拉伸 α0.06（等于没画）——2026-09-18 用户指出未放到指定位置
+  if(ready(set.corner)){
+    // 2026-09-23 恢复原图像素（原为 sr.w*0.44 ≈×1.008）；位置不变——圆角对齐屏幕右下
+    const im = img[set.corner];
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(im, sr.x + sr.w - im.naturalWidth, sr.y + sr.h - im.naturalHeight);
+    ctx.globalAlpha = 1;
+  }
+  // 故障条整图已移出本函数：改为 drawGlitchImage(setName)，在开始/结算界面**所有元素之后**
+  //   调用（置顶）——否则右上角的条会被 Deco_27/Text_03 等不透明黑底盖住（09-23 用户实测）。
+  // 文本/hex 装饰块（Deco_04~21，橙/绿/红三套同族散件）
+  // ★黑底处理：这批散件是**不透明纯黑底** PNG（实测 86%~98% 像素为黑底）。
+  //   2026-09-20 曾按用户反馈改用「滤色(screen)」合成去掉黑底；
+  //   **2026-09-21 用户最终决定：Deco_01~21 导入时一律不去背景、按原图绘制**（含黑底），
+  //   故这里恢复为普通叠加（source-over）。故障条(Deco_22/28/29/30)自带透明通道，同样是普通叠加。
+  //   如将来又要去黑底：在循环里改回 ctx.globalCompositeOperation = 'screen' 即可。
+  ctx.globalAlpha = 0.8;
+  const ov = DECO_LAYOUT_OVERRIDES[setName];
+  for(const [role, fx, fy, fw, anchor, dyPt = 0] of (ov
+      // 覆写为 null = 该角色整套不画（如橙套删掉 Deco_20 小条）
+      ? DECO_LAYOUT.filter(e => !(e[0] in ov) || ov[e[0]] !== null)
+                   .map(e => (ov[e[0]] ? [e[0]].concat(ov[e[0]]) : e))
+      : DECO_LAYOUT)){
+    const key = role === 'n1110b' ? set.n1110 : set[role];
+    if(!ready(key)){
+      // 键名写错时 ready() 会静默跳过（绿/红套曾因此少画 6 个装饰块）→ 首次遇到缺键就在控制台报出来
+      if(!(key in ASSETS) && !decoMissingWarned.has(key)){
+        decoMissingWarned.add(key);
+        console.warn('[deco] 装饰资源键不存在，已跳过：' + key + '（检查 DECO_SETS 是否与 ASSETS 键一致）');
+      }
+      continue;
+    }
+    // fw === 'nat'：按图片**原始像素尺寸**导入（不改大小；画布固定 1920×1080，1:1）
+    // 否则 fw 为宽度占内区比例，高度按素材宽高比推算
+    const w = fw === 'nat' ? img[key].naturalWidth : sr.w * fw;
+    const h = fw === 'nat' ? img[key].naturalHeight : w * img[key].naturalHeight / img[key].naturalWidth;
+    // 'bl'（bottom-left）：(fx, fy)=左/下边距比例，块贴屏幕左下角；'tr'（top-right）：(fx, fy)=右/上
+    // 边距比例，块贴屏幕右上角；'text3L2'：块底边贴中央描边大字（左起两个字）墨迹顶边，
+    //   水平居中于那两个字（fx 不用，fy = 与字顶的像素间隙）；缺省 'c'：(fx, fy)=块中心占内区比例
+    let x, y;
+    if(anchor === 'bl'){ x = sr.x + sr.w * fx; y = sr.y + sr.h * fy - h; }
+    else if(anchor === 'tr'){ x = sr.x + sr.w * (1 - fx) - w; y = sr.y + sr.h * fy; }
+    else if(anchor === 'belowBig'){
+      // 与大文本块（Deco_16 等 text3L2 锚点）同一条中轴，纵向仍按 (fy=中心占内区比例) 摆放
+      const tw = sr.w * 0.85;
+      x = sr.x + sr.w/2 - tw/2 + tw * TEXT3_L2_CENTER - w/2;
+      y = sr.y + sr.h * fy - h/2;
+    }
+    else if(anchor === 'belowHexm' || anchor === 'belowHexmL'){
+      // 与 hexm（Deco_19，text3c7left 锚点）纵向对齐、位于其下方；本项 fy = 块中心占内区比例，
+      // fx 无用，第 6 项 dyPt = 向下偏移（单位 pt）。hexm 布点取自当前主题覆写表（三套都有 hexm）。
+      //   'belowHexm'  = 两者**中轴对齐**；'belowHexmL' = 两者**最左侧（左缘）对齐**
+      const he = ov.hexm || DECO_LAYOUT.find(e2 => e2[0] === 'hexm').slice(1);
+      const tw = sr.w * 0.85;
+      const hLeft = sr.x + sr.w/2 - tw/2 + tw * TEXT3_C7_LEFT - he[0] * PT;
+      x = anchor === 'belowHexmL' ? hLeft : hLeft + sr.w * he[2] / 2 - w/2;
+      y = sr.y + sr.h * fy - h/2 + dyPt * PT;
+    }
+    else if(anchor === 'text3c7left'){
+      // 块左缘 = 中央描边大字"倒数第二个字"的左缘（TEXT3_C7_LEFT），纵向 fy = 中心占内区比例；
+      // fx = 向左偏移（单位 pt），第 6 项 dyPt = 向下偏移（单位 pt）
+      const tw = sr.w * 0.85;
+      x = sr.x + sr.w/2 - tw/2 + tw * TEXT3_C7_LEFT - fx * PT;
+      y = sr.y + sr.h * fy - h/2 + dyPt * PT;
+    }
+    else if(anchor === 'text3L2'){
+      const tw = sr.w * 0.85, th = tw * TEXT3_AR;
+      const inkTop = sr.y + sr.h * 0.47 - th/2 + th * TEXT3_INK_TOP;
+      x = sr.x + sr.w/2 - tw/2 + tw * TEXT3_L2_CENTER - w/2;
+      y = inkTop - h - fy * PT; // fy：与字顶的间隙，按项目单位 pt（PT=96/72 转 px）
+    }
+    else { x = sr.x + sr.w * fx - w/2; y = sr.y + sr.h * fy - h/2; }
+    ctx.drawImage(img[key], x, y, w, h);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  // 两侧大箭头（静态图，不播序列帧）：本侧 3 张帧同屏叠放（实→虚拖尾，»» 层次）。
+  // 原图朝左 «——左侧镜像成 »、右侧原样 «，双侧都朝屏幕中心；颜色全部以图片为准。
+  const frames = DECO_ARROW_FRAMES[setName] || [1,2,3];
+  const ims = frames.map(f => ready('arrow' + f) ? img['arrow' + f] : null);
+  if(ims.every(Boolean)){
+    // 2026-09-23 恢复原尺寸：三帧各自按**自己的原始像素**绘制（此前统一套用帧[0]的尺寸，
+    // 导致 Arrow_02/03、08/07、05/04 横向被压扁）。三张高度都是 160，故高度自然一致
+    const step = ARROW_STEP;   // 三界面统一步进（不再用 ims[0] 的宽度）
+    const cy = sr.y + sr.h * 0.47;                // 箭头竖直中心=大字中心 → 顶边自然平齐
+    ctx.globalAlpha = 1;
+    // 水平镜像绘制（占位矩形不变；仅为满足"朝向屏幕中心"，无其他任何处理）
+    const drawFlipX = (m, x, y, w, h) => {
+      ctx.save();
+      ctx.translate(x + w/2, y + h/2);
+      ctx.scale(-1, 1);
+      ctx.drawImage(m, -w/2, -h/2, w, h);
+      ctx.restore();
+    };
+    // 左侧 »（镜像朝右=指向中心）：帧序[0]最实在外（左），依次向中心变虚
+    const lx = sr.x + 8;
+    // 左侧净偏移（未配置主题套用初始界面的值 → 三界面对齐）
+    const ldx = ARROW_LEFT_DX_PX[setName] || ARROW_LEFT_DX_PX.orange;
+    ims.forEach((m, i) => drawFlipX(m, lx + i*step + (ldx[i] || 0), cy - m.naturalHeight/2, m.naturalWidth, m.naturalHeight));
+    // 右侧 «（原图朝左=指向中心）：帧序[0]最实在外（右），依次向中心变虚
+    const rx = sr.x + sr.w - 8 - ARROW_REF_W;      // 锚点用固定基准宽（三界面一致）
+    const rdx = ARROW_RIGHT_DX_PX[setName] || ARROW_RIGHT_DX_PX.orange; // 右侧逐帧横移（px）
+    ims.forEach((m, i) => ctx.drawImage(m, rx - i*step + (rdx[i] || 0), cy - m.naturalHeight/2, m.naturalWidth, m.naturalHeight));
+  }
+  // 全界面共用底纹（2026-09-23 用户指定 Deco_23）：按素材原始像素 1400×730 绘制，
+  // **中心与整个画布中心 (960,540) 重叠**；三界面共用（drawScreenDeco 由开始/结算界面调用）。
+  // 画在装饰层最后 = 不被其它装饰的黑底盖住（素材本身是极淡的散点：最大 α 仅 41/255）
+  if(ready('deco23')){
+    const im = img.deco23;
+    ctx.drawImage(im, canvas.width/2 - im.naturalWidth/2, canvas.height/2 - im.naturalHeight/2);
+  }
+  ctx.restore();
+}
+
+// 故障条整图（2026-09-23 用户指定）：整张原图居中于大字中心，1:1 原图像素不缩放。
+// ★必须在开始/结算界面**所有元素之后**调用（置顶）——此前画在 drawScreenDeco 里，
+//   右上角的条被 Deco_27 背板/Text_03 等不透明黑底盖住（用户截图实测"被黑底盖住"）。
+// 中心 = 大字中心 (cx, titleY)，titleY 公式与 drawStartScreen/drawEndScreen 一致（含 CLUSTER_DY_PT）
+function drawGlitchImage(setName){
+  const set = DECO_SETS[setName];
+  if(!set || !ready(set.glitch)) return;
+  const im = img[set.glitch];
+  const sr = tvScreenRect();
+  const tw = sr.w * 0.85, th = tw * TEXT3_AR;
+  const titleCY = sr.y + sr.h * 0.47 - th/2 + th * 0.57 + 10 + CLUSTER_DY_PT * PT;
+  const nudge = GLITCH_NUDGE_PT[setName] || [0, 0];
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.drawImage(im, sr.x + sr.w/2 - im.naturalWidth/2 + nudge[0] * PT,
+                    titleCY - im.naturalHeight/2 + nudge[1] * PT);
+  ctx.restore();
+}
+
+// ------------------------------------------------------------------
+// 开始界面（ready 状态）：按美术视觉稿还原——镂空大字背景 + 橙色机器人
+// 图标 +「破解接入」渐变标题 + SPACE 白色胶囊按钮
+// ------------------------------------------------------------------
+function drawStartScreen(){
+  drawBackground();
+  drawScreenDeco('orange'); // 主题装饰层：橙套散件 + Arrow_01~03 白色箭头（原色）
+  const sc = screenCenter();
+  const cx = sc.x;
+  const centerY = sc.r.y + sc.r.h * 0.47;
+  // 大字高度与顶边（箭头/图标/标题的相对位置都以此为基准）
+  //   + CLUSTER_DY_PT*PT：2026-09-23 用户指定这一簇整体上移 20pt（26.67px）
+  const th = sc.r.w * 0.85 * TEXT3_AR;
+  const textTop = centerY - th/2 + CLUSTER_DY_PT * PT;
+  // 主标题「破解接入」（美术规格：字色 FFB431FF、字号 53 Bold、轮廓 1px ED601A7A、Outline Blur 27）
+  const titleY = textTop + th * 0.57 + 10; // 2026-09-16 用户指定：黄色大字下移 10px（白色小字随行）
+  // 黄色大字背面的美术资源（2026-09-23 用户指定 Deco_27）：按素材原始像素 571×285 绘制，
+  // 居中于黄色大字 —— 素材可见内容实测居中（左 16.5%~84.2%、上 23.9%~75.4%），
+  // 画在标题字之前 = 位于大字背面（图标/大字/副标题都在其上层）
+  if(ready('deco27')){
+    ctx.drawImage(img.deco27, cx - img.deco27.naturalWidth/2, titleY - img.deco27.naturalHeight/2);
+  }
+  // 界面中间的大字（Text_03 CONNECTION）：**按素材原始像素**绘制，中心与原大字位置一致
+  //   ((cx, textTop + th/2))，不改尺寸不移位置。★画在 Deco_27 背板**之后** → 不被背板黑底盖住
+  if(ready('text3')){
+    const im = img.text3;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.shadowColor = 'rgba(255,150,50,0.45)';
+    ctx.shadowBlur = 12;
+    ctx.drawImage(im, cx - im.naturalWidth/2, textTop + th/2 - im.naturalHeight/2);
+    ctx.restore();
+  }
+  // 橙色机器人图标（TitleIcon_03）：按 2026-09-21 参考图 —— 缩小并整体位于标题字上方，
+  // 可见底边与标题字顶留 26px 间隙（不再压住大字），带辉光
+  if(ready('titleI3')){
+    const ih = TITLE_CLUSTER.iconH;
+    const iw = ih * img.titleI3.naturalWidth / img.titleI3.naturalHeight;
+    const iy = titleY - 53 * PT * 0.44 - TITLE_CLUSTER.gapIconTitle - ih * TITLE_CLUSTER.iconBottomFrac + TITLE_ICON_DY_PT * PT;
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,170,40,0.9)';
+    ctx.shadowBlur = 22;
+    ctx.drawImage(img.titleI3, cx - iw/2, iy, iw, ih);
+    ctx.restore();
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = fpt(53, FONT_BOLD);
+  ctx.shadowColor = '#ED601A7A'; // 规格：轮廓颜色 ED601A7A（Outline Blur 27 的辉光=轮廓颜色）
+  ctx.shadowBlur = 27 * PT;
+  ctx.lineWidth = 1 * PT;
+  ctx.strokeStyle = '#ED601A7A'; // 规格：轮廓颜色 ED601A7A、轮廓 1
+  ctx.strokeText('破解接入', cx, titleY);
+  ctx.fillStyle = '#FFB431';
+  ctx.fillText('破解接入', cx, titleY);
+  ctx.shadowBlur = 0;
+  // 副标题（规格：15 Normal FFF6E0E6）+ 底层橙色重影（规格：15 Normal ED601A33，2026-09-23 用户指定）
+  //   重影 = 同一文字先画（在白字下层），向右下偏移 SUB_GHOST_DX/DY（三界面统一）
+  ctx.font = fpt(15, FONT_NORMAL);
+  const subY = titleY + TITLE_CLUSTER.subOffset;
+  ctx.fillStyle = '#ED601A33';
+  ctx.fillText('获取价值字符，入侵终端', cx + SUB_GHOST_DX, subY + SUB_GHOST_DY);
+  ctx.fillStyle = '#FFF6E0E6';
+  ctx.fillText('获取价值字符，入侵终端', cx, subY);
+  // 开始按钮（Button.png 白色胶囊 + SPACE 键帽，悬停发光）
+  drawSpaceButton(startButtonRect(), '开始游戏');
+  // 故障条整图置顶（最后画，保证右上角的条不被背板/黑底盖住）
+  drawGlitchImage('orange');
+  // Deco_22 改到**对局界面**（见 drawGameDeco）——用户指定它只出现在游戏界面
+  // 编辑器自定义关卡提示（覆盖生效中才显示）
+  if(window.MAZE_ROWS_OVERRIDE){
+    ctx.font = 'bold 12px Consolas, monospace';
+    ctx.fillStyle = '#ffb431';
+    ctx.fillText('CUSTOM MAP (editor)', cx, 16);
+  }
+}
+
+// 对局画面装饰（2026-09-23）：Deco_22 整图（518×378）右上角对齐屏幕内区右上角。
+// （此前按 GAME_DECO22 表散摆的 4 块碎片与整图重复，已按用户要求删除，只保留整图）
+// 微调（单位 pt，[dx, dy]）：左移 20、下移 10（2026-09-23 用户指定）
+const GAME_DECO22_NUDGE_PT = [-20, 10];
+// Deco_24 水平中心（画布 px，2026-09-23 用户红框标定：红框中心 ≈ 画布 x1244）
+const DECO24_CX = 1244;
+// Deco_24 纵向微调（单位 pt，正=下移）：2026-09-23 用户要求在现基础上向下平移 30（40px）
+const DECO24_DY_PT = 30;
+function drawGameDeco(){
+  const sr2 = tvScreenRect();
+  // Deco_22 整图（2026-09-23 用户指定，**仅对局界面**）：按素材原始像素 518×378 绘制，
+  // **图片右上角与电视机屏幕内区右上角对齐**；画在对局界面最上层（面板之上）
+  if(ready('deco22')){
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(img.deco22,
+      sr2.x + sr2.w - img.deco22.naturalWidth + GAME_DECO22_NUDGE_PT[0] * PT,
+      sr2.y + GAME_DECO22_NUDGE_PT[1] * PT);
+    ctx.restore();
+  }
+  // Deco_24（2026-09-23 用户指定"接入，在关卡图的正右侧"）：按素材原始像素 176×138 绘制，
+  // 位于右侧面板进度条下方（红框标定：顶边 = 进度条下缘 + 6px，水平中心 = DECO24_CX）。
+  // 进度条几何与 drawUI 的**Message_Bg/Line 原图尺寸布局**同一公式，面板动它跟着动
+  if(ready('deco24')){
+    const im = img.deco24;
+    const keyBoxY = OFFSET_Y + PANEL_TOP_DY_PT * PT;
+    const barY = keyBoxY + 188 + 24 + 44 + INFO_LINE_DY_PT * PT; // Message_Bg(188)+间隙+Line 盒内条位（随完成度区同步）
+    const barH = Math.max(8, 392 * img.barNormal.naturalHeight / img.barNormal.naturalWidth);
+    ctx.drawImage(im, DECO24_CX - im.naturalWidth/2, barY + barH + 6 + DECO24_DY_PT * PT);
+  }
+}
+
+function render(){
+  ctx.clearRect(0,0,canvas.width, canvas.height);
+  if(state === 'boot'){
+    drawBootScreen();
+    return;
+  }
+  if(state === 'ready'){
+    drawStartScreen();
+    return;
+  }
+  drawBackground();
+  ctx.drawImage(mazeLayer, 0, 0);
+  ctx.drawImage(dotsLayer, 0, 0);
+  enemies.forEach(drawEnemy);
+  drawPlayer();
+  drawUI();
+  drawGameDeco(); // Deco_22 故障条碎片（面板四周 4 处，2026-09-23 用户标定）
+
+  if(state === 'win'){
+    drawEndScreen('win');
+  } else if(state === 'dead-restart'){
+    drawEndScreen('dead');
+  }
+}
+
+// ------------------------------------------------------------------
+// 主循环
+// ------------------------------------------------------------------
+function loop(ts){
+  if(!lastTime) lastTime = ts;
+  const dt = Math.min((ts - lastTime) / 1000, 0.05);
+  lastTime = ts;
+  if(state === 'boot' && ts - bootT > 2000) state = 'ready'; // 开机界面 2s 后自动进入初始界面
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+// ------------------------------------------------------------------
+// 编辑器关卡覆盖（本地测试桥）：tools/maze-editor.html 通过同源
+// localStorage('pacmanMazeOverride') 实时同步 MAZE_ROWS + DOT_CELLS；
+// 游戏页监听 storage 事件即时重建迷宫。此机制仅作用于本地，不影响服务器版本。
+// ------------------------------------------------------------------
+function applyMazeOverrideFromStorage(){
+  DOT_CELLS.length = 0; // const 数组，清空后按覆盖数据重填；无覆盖时恢复内置豆子
+  window.MAZE_ROWS_OVERRIDE = null;
+  window.OVERRIDE_SPAWNS = null;
+  const useBuiltinLayout = () => {
+    for(const p of DOT_CELLS_BUILTIN) DOT_CELLS.push([p[0], p[1]]); // 恢复内置豆子
+    computeLayout(MAZE_ROWS[0].length, MAZE_ROWS.length);
+    resizeCanvases();
+  };
+  try{
+    const raw = localStorage.getItem('pacmanMazeOverride');
+    if(!raw){ useBuiltinLayout(); return; }
+    const data = JSON.parse(raw);
+    // 编辑器支持任意行列数：只要是矩形字符串网格就接受，并按其尺寸重算布局
+    const ok = Array.isArray(data.maze) && data.maze.length >= 5
+      && typeof data.maze[0] === 'string' && data.maze[0].length >= 5
+      && data.maze.every(s => typeof s === 'string' && s.length === data.maze[0].length);
+    if(!ok){ useBuiltinLayout(); return; }
+    window.MAZE_ROWS_OVERRIDE = data.maze;
+    computeLayout(data.maze[0].length, data.maze.length);
+    resizeCanvases();
+    if(Array.isArray(data.dots)){
+      for(const cell of data.dots){
+        if(Array.isArray(cell) && cell.length >= 2) DOT_CELLS.push([cell[0], cell[1]]);
+      }
+    }
+    // 出生点：全部落在道路上才采用编辑器给的，否则回退内置出生点
+    const sp = data.spawns;
+    if(sp && Array.isArray(sp.player) && Array.isArray(sp.enemies) && sp.enemies.length){
+      const onRoad = p => Array.isArray(p) && data.maze[p[0]] && data.maze[p[0]][p[1]] === '.';
+      if(onRoad(sp.player) && sp.enemies.every(onRoad)) window.OVERRIDE_SPAWNS = sp;
+    }
+  }catch(e){
+    window.MAZE_ROWS_OVERRIDE = null;
+    window.OVERRIDE_SPAWNS = null;
+    DOT_CELLS.length = 0;
+    useBuiltinLayout();
+  }
+}
+applyMazeOverrideFromStorage();
+window.addEventListener('storage', e => {
+  if(e.key !== 'pacmanMazeOverride') return;
+  applyMazeOverrideFromStorage();
+  fullReset(true);   // 重建迷宫数据 + 豆子层
+  renderMazeLayer(); // 墙体离屏层同步重绘
+  state = 'ready';   // 回到待开始画面，按 ENTER 立即测试新关卡
+});
+
+// ------------------------------------------------------------------
+// 美术资源加载（31 张图：背景/光效/进度条/玩家/生命/道具/弹窗/标题/装饰）
+// 图片全部按美术原文件名加载，失败时回退到矢量（保证双击本地打开也能玩）
+// ------------------------------------------------------------------
+const RES = 'Resource/images/';
+const ASSETS = {
+  bg:       'T_EatBeans_Img_BackGround.png',
+  bgBlack:  'T_EatBeans_Img_BackGround_01.png',
+  light1:   'T_EatBeans_Img_Light_01.png',
+  light2:   'T_EatBeans_Img_Light_02.png',
+  mainBg:   'T_EatBeans_Img_Main_Bg.png',
+  barNormal:'T_EatBeans_Img_Bar_Normal.png',
+  barBlue:  'T_EatBeans_Img_Bar_State_01.png',
+  barYel:   'T_EatBeans_Img_Bar_State_02.png',
+  player:   '合图/T_EatBeans_Img_Player.png',      // 角色默认态（70×70）
+  playerInv:'合图/T_EatBeans_Img_Player_01.png',   // 2026-09-24 用户指派：破解成功（吃光豆子）后的角色态（64×56，非正方）
+  playerEff:'T_EatBeans_Img_Player_Eff.png',      // 2026-09-24：破解成功后以角色为中心的特效（700×700）
+  life:     '合图/T_EatBeans_Img_Life.png',
+  prop:     '合图/T_EatBeans_Img_Prop.png',
+  msgBg:    '合图/T_EatBeans_Img_Message_Bg.png',
+  button:   '合图/T_EatBeans_Img_Button.png',
+  itemBg:   '合图/T_EatBeans_Img_Item_Bg.png',
+  titleI1:  '合图/T_EatBeans_Img_TitleIcon_01.png',
+  titleI2:  '合图/T_EatBeans_Img_TitleIcon_02.png',
+  titleI3:  '合图/T_EatBeans_Img_TitleIcon_03.png',
+  deco1:    'T_EatBeans_Img_Deco_01.png',
+  deco2:    'T_EatBeans_Img_Deco_02.png',
+  deco3:    'T_EatBeans_Img_Deco_03.png',
+  deco24:   'T_EatBeans_Img_Deco_24.png',
+  deco23:   'T_EatBeans_Img_Deco_23.png',
+  deco25:   'T_EatBeans_Img_Deco_25.png',
+  deco26:   'T_EatBeans_Img_Deco_26.png',
+  deco27:   'T_EatBeans_Img_Deco_27.png',
+  deco4:    'T_EatBeans_Img_Deco_04.png',
+  deco5:    'T_EatBeans_Img_Deco_05.png',
+  deco6:    'T_EatBeans_Img_Deco_06.png',
+  deco7:    'T_EatBeans_Img_Deco_07.png',
+  deco8:    'T_EatBeans_Img_Deco_08.png',
+  deco9:    'T_EatBeans_Img_Deco_09.png',
+  deco10:   'T_EatBeans_Img_Deco_10.png',
+  deco11:   'T_EatBeans_Img_Deco_11.png',
+  deco12:   'T_EatBeans_Img_Deco_12.png',
+  deco13:   'T_EatBeans_Img_Deco_13.png',
+  deco14:   'T_EatBeans_Img_Deco_14.png',
+  deco15:   'T_EatBeans_Img_Deco_15.png',
+  deco16:   'T_EatBeans_Img_Deco_16.png',
+  deco17:   'T_EatBeans_Img_Deco_17.png',
+  deco18:   'T_EatBeans_Img_Deco_18.png',
+  deco19:   'T_EatBeans_Img_Deco_19.png',
+  deco20:   'T_EatBeans_Img_Deco_20.png',
+  deco21:   'T_EatBeans_Img_Deco_21.png',
+  deco22:   'T_EatBeans_Img_Deco_22.png',
+  deco28:   'T_EatBeans_Img_Deco_28.png',
+  // 2026-10-09 用户整理素材：旧 Deco_29 与 Deco_28 完全相同（已删旧 Deco_29），
+  //   并把 image.png（成功界面绿 glitch）改名为 T_EatBeans_Img_Deco_29.png —— 文件名与键名对齐
+  glitchWin:'T_EatBeans_Img_Deco_29.png',  // 成功界面故障条（724×298，绿碎片 #2FE473，原 image.png）
+  deco29:   'T_EatBeans_Img_Deco_29.png',
+  deco30:   'T_EatBeans_Img_Deco_30.png',
+  btnHL:    '合图/T_EatBeans_Img_Arrow.png',
+  line:     '合图/T_EatBeans_Img_Line.png',
+  msgBg:    '合图/T_EatBeans_Img_Message_Bg.png',
+  btnHLY:   '合图/T_EatBeans_Img_Arrow_Yellow.png',
+  text1:    'T_EatBeans_Img_Text_01.png',
+  text2:    'T_EatBeans_Img_Text_02.png',
+  text3:    'T_EatBeans_Img_Text_03.png',
+  arrow1:   'T_EatBeans_Img_Arrow_01.png',
+  arrow2:   'T_EatBeans_Img_Arrow_02.png',
+  arrow3:   'T_EatBeans_Img_Arrow_03.png',
+  arrow4:   'T_EatBeans_Img_Arrow_04.png',
+  arrow5:   'T_EatBeans_Img_Arrow_05.png',
+  arrow6:   'T_EatBeans_Img_Arrow_06.png',
+  arrow7:   'T_EatBeans_Img_Arrow_07.png',
+  arrow8:   'T_EatBeans_Img_Arrow_08.png',
+  arrow9:   'T_EatBeans_Img_Arrow_09.png',
+};
+const img = {};
+const assetKeys = Object.keys(ASSETS);
+let assetsDone = 0;
+function onAsset(){
+  if(++assetsDone >= assetKeys.length){
+    buildMaze();
+    renderMazeLayer();
+    renderDotsLayer();
+    const ps = activePlayerSpawn();
+    player = makeEntity(ps.r, ps.c, PLAYER_SPD, PLAYER_HALF);
+    enemies = activeEnemySpawns().map(s => makeEntity(s.r, s.c, ENEMY_SPD, ENEMY_HALF));
+    // 等三族字体就绪再开渲染（失败/超时回退系统字体，不阻塞启动）
+    const fontsReady = (typeof document !== 'undefined' && document.fonts && document.fonts.load)
+      ? Promise.race([
+          Promise.all([
+            document.fonts.load('53px GameBold', '破解接入'),
+            document.fonts.load('15px GameNormal', '获取价值字符，入侵终端'),
+            document.fonts.load('16px GameDrift', 'KEY=0123456789'),
+          ]).catch(()=>{}),
+          new Promise(res => setTimeout(res, 1500))
+        ])
+      : Promise.resolve();
+    Promise.all([loadKeyConfig(), fontsReady]).then(()=>{ bootT = performance.now(); requestAnimationFrame(loop); });
+  }
+}
+for(const k of assetKeys){
+  img[k] = new Image();
+  img[k].onload = onAsset;
+  img[k].onerror = onAsset;
+  img[k].src = RES + ASSETS[k];
+}
+function ready(k){
+  return img[k] && img[k].complete && img[k].naturalWidth > 0;
+}
+
+// 多层叠背景：黑底 → ASCII 代码装饰 → 大装饰 → 氛围光
+// 注：终端机外壳图(bg)与圆形迷宫图(mainBg)自带另一套迷宫画面，
+// 会与本关卡的 30×27 网格墙体冲突，故不再作为背景绘制。
+// 开机界面（boot 状态）：电视整机图（BackGround.png，含其自带屏幕画面），
+// 2 秒或任意键/点击后进入初始界面
+function drawBootScreen(){
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  if(ready('bg')){
+    ctx.drawImage(img.bg, 0, 0, canvas.width, canvas.height); // 整机铺满（含其自带屏画）
+  }
+}
+
+// BackGround.png(1920×1080) 中电视屏幕内区占整幅的比例（2026-09-16 实测标定）。
+// 电视图与画布同为 16:9 铺满，内区直接按画布比例换算，不依赖图片加载。
+// 2026-09-21 用户要求"游戏画面往下延长、中间尽量贴紧电视机屏幕内侧"：
+//   实测玻璃区下边缘是弧线（中间 y≈944~946、两侧收到 y≈930），B 从 0.850(918) 延到
+//   0.874(944) —— 中段正好贴住内边缘，左右圆角处会略压过弧线（暗贴暗，不明显）。
+function tvScreenRect(){
+  const L=0.091, T=0.104, R=0.888, B=0.874;
+  return { x: Math.round(canvas.width*L), y: Math.round(canvas.height*T),
+           w: Math.round(canvas.width*(R-L)), h: Math.round(canvas.height*(B-T)) };
+}
+
+function drawBackground(){
+  if(ready('bgBlack')){
+    ctx.drawImage(img.bgBlack, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+  }
+  // 电视终端机：16:9 整机铺满画布（1920×1080→1280×720 无变形），
+  // 屏幕内区换 BackGround_01 黑格栅（遮住电视自带的迷宫画）
+  if(ready('bg')){
+    ctx.drawImage(img.bg, 0, 0, canvas.width, canvas.height);
+    if(ready('bgBlack')){
+      const r = tvScreenRect();
+      ctx.drawImage(img.bgBlack, r.x, r.y, r.w, r.h);
+    }
+  }
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  if(ready('deco24')) ctx.drawImage(img.deco24, 0, 0, canvas.width, canvas.height);
+  // Deco_01/02/03 已改为按主题锚定屏幕右下角（见 drawScreenDeco），不再全画布拉伸
+  ctx.globalAlpha = 0.20;
+  if(ready('light2')) ctx.drawImage(img.light2, 0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 0.13;
+  if(ready('light1')) ctx.drawImage(img.light1, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+})();
+</script>
+</body>
+</html>
